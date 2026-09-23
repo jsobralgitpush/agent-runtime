@@ -12,6 +12,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Deterministic local execution without API credentials
 - Exponential retry backoff and per-step timeouts
 - Idempotent run creation under concurrent requests
+- Optional deferred execution through a database-backed worker
 - Latency, token, cost, input, output, and error recording per step
 - JSON structured logging, Docker Compose, tests, type checking, linting, and CI
 
@@ -85,6 +86,16 @@ curl -X POST http://localhost:8000/v1/workflows/<workflow-id>/runs \
   -d '{"inputs":{"topic":"reliable AI systems"}}'
 ```
 
+To enqueue the run instead of executing it in the API process, add
+`Prefer: respond-async` and start a worker in another terminal:
+
+```bash
+make worker
+```
+
+The API returns `202 Accepted` with a pending run. Workers claim pending runs in creation order
+using a row lock, so multiple worker processes can poll without executing the same run.
+
 References support `${input.<key>}` and `${steps.<step-key>.output}`. A reference occupying the entire value preserves JSON types; references embedded in text are stringified.
 
 ## Quality checks
@@ -107,12 +118,12 @@ LLM providers implement the `LLMProvider` protocol and are registered in `Provid
 | `POST` | `/v1/workflows` | Validate and persist a workflow |
 | `GET` | `/v1/workflows` | List workflows |
 | `GET` | `/v1/workflows/{id}` | Inspect a workflow |
-| `POST` | `/v1/workflows/{id}/runs` | Create and synchronously execute a run |
+| `POST` | `/v1/workflows/{id}/runs` | Execute a run, or enqueue it with `Prefer: respond-async` |
 | `GET` | `/v1/runs/{id}` | Inspect a run and all step telemetry |
 
 ## Roadmap
 
-- v0.2: queue-backed workers, leases, heartbeats, and recovery of interrupted runs
+- v0.2: database-backed workers (initial delivery), then leases, heartbeats, and interrupted-run recovery
 - v0.3: OpenAI/Anthropic adapters, encrypted credentials, and provider fallback
 - v0.4: DAG execution, parallel branches, and human approval steps
 - v0.5: OpenTelemetry traces, Prometheus metrics, evaluation datasets, and budgets

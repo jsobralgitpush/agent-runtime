@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     default_step_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     max_step_retries: int = Field(default=5, ge=0, le=10)
+    worker_poll_interval_seconds: float = Field(default=1.0, gt=0, le=60)
 
 
 @lru_cache

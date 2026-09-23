@@ -94,7 +94,12 @@ erDiagram
     }
 ```
 
-## Intentional v0.1 constraint
+## Execution modes
 
-Execution is synchronous with the request. This makes the correctness model and demo easy to verify. The engine boundary is designed so v0.2 can move execution into workers while the API changes to return `202 Accepted`.
+Execution remains synchronous by default, preserving the simple local demo. Clients can send
+`Prefer: respond-async` to persist a pending run and receive `202 Accepted`; an `agent-worker`
+process claims the oldest pending run with `FOR UPDATE SKIP LOCKED` and invokes the same engine.
+The database is the initial queue so run creation and claim state share one transaction boundary.
 
+This first worker slice does not recover a run after a worker process crashes. Leases, heartbeats,
+and safe resumption are the next v0.2 increment; until then, operators must inspect running jobs.
