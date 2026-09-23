@@ -20,6 +20,9 @@ dependencies = [
   "uvicorn[standard]>=0.32,<1",
 ]
 
+[project.scripts]
+agent-worker = "app.worker:main"
+
 [project.optional-dependencies]
 dev = [
   "aiosqlite>=0.20,<1",
@@ -49,4 +52,3 @@ select = ["E", "F", "I", "B", "UP", "ASYNC"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-

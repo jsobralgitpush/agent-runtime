@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,7 +72,9 @@ async def create_run(
     workflow_id: str,
     payload: RunCreate,
     session: Session,
+    response: Response,
     idempotency_key: Annotated[str | None, Header(max_length=255)] = None,
+    prefer: Annotated[str | None, Header(max_length=255)] = None,
 ) -> WorkflowRun:
     workflow = await session.get(Workflow, workflow_id)
     if workflow is None:
@@ -113,6 +115,11 @@ async def create_run(
         raise
 
     await session.refresh(run)
+    if prefer and "respond-async" in {item.strip().lower() for item in prefer.split(",")}:
+        response.status_code = status.HTTP_202_ACCEPTED
+        await session.refresh(run, attribute_names=["steps"])
+        return run
+
     engine = WorkflowEngine(get_settings())
     return await engine.execute(
         session, run, WorkflowDefinition.model_validate(workflow.definition)
