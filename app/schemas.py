@@ -93,6 +93,9 @@ class RunRead(BaseModel):
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+    lease_owner: str | None
+    lease_expires_at: datetime | None
+    heartbeat_at: datetime | None
     steps: list[StepRunRead] = Field(default_factory=list)
 
 

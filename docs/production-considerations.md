@@ -16,7 +16,9 @@ v0.1 demonstrates production concerns but is not presented as a finished multi-t
 
 ### Queueing and recovery
 
-Move execution to durable workers. Claim runs with a lease, refresh a heartbeat, and recover work after a worker crash. Acknowledging a queue message and committing database state must follow a documented at-least-once strategy.
+Deferred execution uses database-backed workers with renewable leases and heartbeats. Before
+production use, reclaim expired leases and resume or fail interrupted work according to persisted
+step state. Recovery must follow a documented at-least-once strategy, especially for side effects.
 
 ### Side-effect idempotency
 
@@ -56,4 +58,3 @@ Pin release dependencies, generate an SBOM, scan container images and dependenci
 | Retry duplicates | Run creation is idempotent | Per-tool operation keys and outbox |
 | Resource exhaustion | Definition bounds exist | Tenant quotas and worker isolation |
 | Cross-tenant access | No tenancy in v0.1 | Tenant-scoped authorization |
-
