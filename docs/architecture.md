@@ -100,6 +100,9 @@ Execution remains synchronous by default, preserving the simple local demo. Clie
 `Prefer: respond-async` to persist a pending run and receive `202 Accepted`; an `agent-worker`
 process claims the oldest pending run with `FOR UPDATE SKIP LOCKED` and invokes the same engine.
 The database is the initial queue so run creation and claim state share one transaction boundary.
+Each claim stores a worker ID, heartbeat timestamp, and lease deadline. A separate database session
+renews the lease during execution so provider calls do not block heartbeats.
 
-This first worker slice does not recover a run after a worker process crashes. Leases, heartbeats,
-and safe resumption are the next v0.2 increment; until then, operators must inspect running jobs.
+Expired leases make dead workers observable, but the runtime does not yet reclaim them. Safe
+resumption is the next v0.2 increment because a partially completed run may contain persisted step
+results or external side effects that cannot be repeated blindly.

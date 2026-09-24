@@ -1,7 +1,14 @@
+import os
+import socket
 from functools import lru_cache
+from typing import Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _default_worker_id() -> str:
+    return f"{socket.gethostname()}:{os.getpid()}"
 
 
 class Settings(BaseSettings):
@@ -14,6 +21,15 @@ class Settings(BaseSettings):
     default_step_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     max_step_retries: int = Field(default=5, ge=0, le=10)
     worker_poll_interval_seconds: float = Field(default=1.0, gt=0, le=60)
+    worker_id: str = Field(default_factory=_default_worker_id, min_length=1, max_length=255)
+    worker_lease_seconds: int = Field(default=60, ge=5, le=3600)
+    worker_heartbeat_seconds: float = Field(default=15.0, gt=0, le=300)
+
+    @model_validator(mode="after")
+    def heartbeat_precedes_lease_expiry(self) -> Self:
+        if self.worker_heartbeat_seconds >= self.worker_lease_seconds:
+            raise ValueError("worker heartbeat interval must be shorter than the lease")
+        return self
 
 
 @lru_cache

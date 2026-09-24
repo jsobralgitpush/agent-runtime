@@ -1,8 +1,11 @@
+from datetime import UTC, datetime, timedelta
+
+import pytest
 from httpx import AsyncClient
 
 from app.config import Settings
 from app.models import RunStatus
-from app.worker import run_worker_once
+from app.worker import claim_next_run, renew_lease, run_worker_once
 from tests.conftest import TestSession
 
 
@@ -91,18 +94,64 @@ async def test_deferred_run_is_executed_by_worker(client: AsyncClient) -> None:
     assert created.status_code == 202
     assert created.json()["status"] == RunStatus.pending
     assert created.json()["steps"] == []
+    assert created.json()["lease_owner"] is None
 
-    processed = await run_worker_once(TestSession, Settings(app_env="test"))
+    processed = await run_worker_once(
+        TestSession,
+        Settings(app_env="test", worker_id="test-worker"),
+    )
 
     assert processed is True
     fetched = await client.get(f"/v1/runs/{created.json()['id']}")
     assert fetched.json()["status"] == RunStatus.completed
     assert fetched.json()["output"].endswith("EXPLAIN WORKERS")
+    assert fetched.json()["lease_owner"] is None
+    assert fetched.json()["lease_expires_at"] is None
+    assert fetched.json()["heartbeat_at"] is not None
+
+
+async def test_worker_claims_and_renews_its_lease(client: AsyncClient) -> None:
+    workflow = await create_workflow(client)
+    created = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {}},
+        headers={"Prefer": "respond-async"},
+    )
+    claimed_at = datetime(2026, 9, 24, tzinfo=UTC)
+
+    async with TestSession() as session:
+        claimed = await claim_next_run(
+            session,
+            "worker-a",
+            60,
+            now=claimed_at,
+        )
+        assert claimed is not None
+        assert claimed.id == created.json()["id"]
+        assert claimed.lease_owner == "worker-a"
+        assert claimed.heartbeat_at == claimed_at
+        assert claimed.lease_expires_at == claimed_at + timedelta(seconds=60)
+
+    renewed_at = claimed_at + timedelta(seconds=15)
+    async with TestSession() as session:
+        assert not await renew_lease(session, claimed.id, "worker-b", 60, now=renewed_at)
+        assert await renew_lease(session, claimed.id, "worker-a", 60, now=renewed_at)
+        renewed = await session.get(type(claimed), claimed.id)
+        assert renewed is not None
+        assert renewed.heartbeat_at is not None
+        assert renewed.lease_expires_at is not None
+        assert renewed.heartbeat_at.replace(tzinfo=UTC) == renewed_at
+        assert renewed.lease_expires_at.replace(tzinfo=UTC) == renewed_at + timedelta(seconds=60)
 
 
 async def test_worker_reports_when_queue_is_empty() -> None:
     processed = await run_worker_once(TestSession, Settings(app_env="test"))
     assert processed is False
+
+
+def test_worker_heartbeat_must_precede_lease_expiry() -> None:
+    with pytest.raises(ValueError, match="heartbeat interval"):
+        Settings(worker_lease_seconds=5, worker_heartbeat_seconds=5)
 
 
 async def test_validation_and_not_found_responses(client: AsyncClient) -> None:

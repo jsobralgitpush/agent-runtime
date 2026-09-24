@@ -9,6 +9,7 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -43,7 +44,10 @@ class Workflow(Base):
 
 class WorkflowRun(Base):
     __tablename__ = "workflow_runs"
-    __table_args__ = (UniqueConstraint("workflow_id", "idempotency_key"),)
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "idempotency_key"),
+        Index("ix_workflow_runs_status_lease_expires_at", "status", "lease_expires_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     workflow_id: Mapped[str] = mapped_column(ForeignKey("workflows.id", ondelete="CASCADE"))
@@ -58,6 +62,11 @@ class WorkflowRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     workflow: Mapped[Workflow] = relationship(back_populates="runs")
     steps: Mapped[list["StepRun"]] = relationship(
