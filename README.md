@@ -13,6 +13,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Exponential retry backoff and per-step timeouts
 - Idempotent run creation under concurrent requests
 - Optional deferred execution through database workers with renewable leases
+- Conservative recovery of expired worker leases without automatic side-effect replay
 - Latency, token, cost, input, output, and error recording per step
 - JSON structured logging, Docker Compose, tests, type checking, linting, and CI
 
@@ -96,7 +97,8 @@ make worker
 The API returns `202 Accepted` with a pending run. Workers claim pending runs in creation order
 using a row lock, so multiple worker processes can poll without executing the same run. Each claim
 records a worker ID and lease deadline; the worker extends the lease with periodic heartbeats and
-releases it after the run finishes.
+releases it after the run finishes. Before claiming new work, workers mark expired runs and their
+incomplete steps as failed. They deliberately do not replay interrupted steps automatically.
 
 References support `${input.<key>}` and `${steps.<step-key>.output}`. A reference occupying the entire value preserves JSON types; references embedded in text are stringified.
 
@@ -125,7 +127,7 @@ LLM providers implement the `LLMProvider` protocol and are registered in `Provid
 
 ## Roadmap
 
-- v0.2: database-backed workers with leases and heartbeats, then interrupted-run recovery
+- v0.2: database-backed workers, leases, heartbeats, and terminal expired-run recovery; resumable recovery next
 - v0.3: OpenAI/Anthropic adapters, encrypted credentials, and provider fallback
 - v0.4: DAG execution, parallel branches, and human approval steps
 - v0.5: OpenTelemetry traces, Prometheus metrics, evaluation datasets, and budgets
