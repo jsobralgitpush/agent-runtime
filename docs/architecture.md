@@ -103,6 +103,9 @@ The database is the initial queue so run creation and claim state share one tran
 Each claim stores a worker ID, heartbeat timestamp, and lease deadline. A separate database session
 renews the lease during execution so provider calls do not block heartbeats.
 
-Expired leases make dead workers observable, but the runtime does not yet reclaim them. Safe
-resumption is the next v0.2 increment because a partially completed run may contain persisted step
-results or external side effects that cannot be repeated blindly.
+Before claiming new work, a worker locks expired runs in bounded batches and marks each run plus
+its incomplete steps as failed. Clearing ownership fences out the previous worker. Before persisting
+a step result, every leased worker locks the run row and verifies that its ownership and deadline
+are still valid, preventing a late result from overwriting recovery. The runtime does not replay the
+interrupted step: resumable recovery is separate because external side effects cannot be repeated
+blindly.

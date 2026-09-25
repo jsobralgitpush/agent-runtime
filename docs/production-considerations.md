@@ -16,9 +16,10 @@ v0.1 demonstrates production concerns but is not presented as a finished multi-t
 
 ### Queueing and recovery
 
-Deferred execution uses database-backed workers with renewable leases and heartbeats. Before
-production use, reclaim expired leases and resume or fail interrupted work according to persisted
-step state. Recovery must follow a documented at-least-once strategy, especially for side effects.
+Deferred execution uses database-backed workers with renewable leases and heartbeats. Expired runs
+are terminalized as failed without replay, preventing them from remaining ambiguously `running`.
+Before production use, add explicit retry/resume operations according to persisted step state and
+a documented at-least-once strategy, especially for side effects.
 
 ### Side-effect idempotency
 

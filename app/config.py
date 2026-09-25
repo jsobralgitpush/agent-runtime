@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     worker_id: str = Field(default_factory=_default_worker_id, min_length=1, max_length=255)
     worker_lease_seconds: int = Field(default=60, ge=5, le=3600)
     worker_heartbeat_seconds: float = Field(default=15.0, gt=0, le=300)
+    worker_recovery_batch_size: int = Field(default=100, ge=1, le=1000)
 
     @model_validator(mode="after")
     def heartbeat_precedes_lease_expiry(self) -> Self:

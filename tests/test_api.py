@@ -4,8 +4,15 @@ import pytest
 from httpx import AsyncClient
 
 from app.config import Settings
-from app.models import RunStatus
-from app.worker import claim_next_run, renew_lease, run_worker_once
+from app.engine import WorkerLeaseLostError, assert_active_lease
+from app.models import RunStatus, StepRun, WorkflowRun
+from app.worker import (
+    LEASE_EXPIRED_ERROR,
+    claim_next_run,
+    recover_expired_runs,
+    renew_lease,
+    run_worker_once,
+)
 from tests.conftest import TestSession
 
 
@@ -142,6 +149,64 @@ async def test_worker_claims_and_renews_its_lease(client: AsyncClient) -> None:
         assert renewed.lease_expires_at is not None
         assert renewed.heartbeat_at.replace(tzinfo=UTC) == renewed_at
         assert renewed.lease_expires_at.replace(tzinfo=UTC) == renewed_at + timedelta(seconds=60)
+        assert not await renew_lease(
+            session,
+            claimed.id,
+            "worker-a",
+            60,
+            now=renewed_at + timedelta(seconds=61),
+        )
+
+
+async def test_worker_fails_expired_run_without_replaying_steps(client: AsyncClient) -> None:
+    workflow = await create_workflow(client)
+    created = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {"topic": "recovery"}},
+        headers={"Prefer": "respond-async"},
+    )
+    recovered_at = datetime(2026, 9, 25, tzinfo=UTC)
+
+    async with TestSession() as session:
+        claimed = await claim_next_run(
+            session,
+            "dead-worker",
+            60,
+            now=recovered_at - timedelta(seconds=120),
+        )
+        assert claimed is not None
+        step = StepRun(
+            run_id=claimed.id,
+            step_key="draft",
+            position=0,
+            step_type="llm",
+            status=RunStatus.running,
+        )
+        session.add(step)
+        await session.commit()
+
+    async with TestSession() as session:
+        assert await recover_expired_runs(session, 100, now=recovered_at) == 1
+        recovered = await session.get(WorkflowRun, created.json()["id"])
+        interrupted_step = await session.get(StepRun, step.id)
+        assert recovered is not None
+        assert interrupted_step is not None
+        assert recovered.status == RunStatus.failed
+        assert recovered.error == LEASE_EXPIRED_ERROR
+        assert recovered.completed_at is not None
+        assert recovered.lease_owner is None
+        assert recovered.lease_expires_at is None
+        assert interrupted_step.status == RunStatus.failed
+        assert interrupted_step.error == LEASE_EXPIRED_ERROR
+        assert interrupted_step.output is None
+        with pytest.raises(WorkerLeaseLostError, match="no longer owns"):
+            await assert_active_lease(
+                session,
+                recovered.id,
+                "dead-worker",
+                now=recovered_at,
+            )
+        assert await recover_expired_runs(session, 100, now=recovered_at) == 0
 
 
 async def test_worker_reports_when_queue_is_empty() -> None:

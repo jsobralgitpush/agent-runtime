@@ -6,6 +6,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -16,6 +17,33 @@ from app.tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
 REFERENCE = re.compile(r"\$\{(input|steps)\.([a-zA-Z0-9_-]+)(?:\.output)?\}")
+
+
+class WorkerLeaseLostError(RuntimeError):
+    pass
+
+
+async def assert_active_lease(
+    session: AsyncSession,
+    run_id: str,
+    lease_owner: str,
+    *,
+    now: datetime | None = None,
+) -> None:
+    checked_at = now or datetime.now(UTC)
+    active_run_id = await session.scalar(
+        select(WorkflowRun.id)
+        .where(
+            WorkflowRun.id == run_id,
+            WorkflowRun.status == RunStatus.running,
+            WorkflowRun.lease_owner == lease_owner,
+            WorkflowRun.lease_expires_at.is_not(None),
+            WorkflowRun.lease_expires_at > checked_at,
+        )
+        .with_for_update()
+    )
+    if active_run_id is None:
+        raise WorkerLeaseLostError(f"Worker {lease_owner} no longer owns run {run_id}")
 
 
 def _lookup_reference(match: re.Match[str], inputs: dict[str, Any], outputs: dict[str, Any]) -> Any:
@@ -60,8 +88,11 @@ class WorkflowEngine:
         session: AsyncSession,
         run: WorkflowRun,
         definition: WorkflowDefinition,
+        *,
+        lease_owner: str | None = None,
     ) -> WorkflowRun:
         outputs: dict[str, Any] = {}
+        lease_lost = False
         run.status = RunStatus.running
         run.started_at = datetime.now(UTC)
         await session.commit()
@@ -80,17 +111,31 @@ class WorkflowEngine:
                 )
                 session.add(step_run)
                 await session.flush()
-                output = await self._execute_step(session, run, step, step_run, outputs)
+                output = await self._execute_step(
+                    session,
+                    run,
+                    step,
+                    step_run,
+                    outputs,
+                    lease_owner,
+                )
                 outputs[step.key] = output
             run.status = RunStatus.completed
             run.output = outputs[definition.steps[-1].key]
+        except WorkerLeaseLostError:
+            lease_lost = True
+            await session.rollback()
+            logger.warning("workflow_run_lease_lost", extra={"run_id": run.id})
         except Exception as exc:
             run.status = RunStatus.failed
             run.error = f"{type(exc).__name__}: {exc}"
             logger.exception("workflow_run_failed", extra={"run_id": run.id})
         finally:
-            run.completed_at = datetime.now(UTC)
-            await session.commit()
+            if lease_lost:
+                await session.refresh(run)
+            else:
+                run.completed_at = datetime.now(UTC)
+                await session.commit()
             await session.refresh(run, attribute_names=["steps"])
 
         logger.info("workflow_run_finished", extra={"run_id": run.id, "status": run.status.value})
@@ -103,6 +148,7 @@ class WorkflowEngine:
         step: WorkflowStep,
         step_run: StepRun,
         outputs: dict[str, Any],
+        lease_owner: str | None,
     ) -> Any:
         resolved_input = resolve_references(step.input, run.inputs, outputs)
         step_run.input = resolved_input
@@ -120,6 +166,8 @@ class WorkflowEngine:
                 result = await asyncio.wait_for(
                     self._dispatch(step, resolved_input, run.id), timeout=timeout
                 )
+                if lease_owner is not None:
+                    await assert_active_lease(session, run.id, lease_owner)
                 output = result.output if isinstance(result, LLMResult) else result
                 step_run.output = output
                 if isinstance(result, LLMResult):
@@ -131,6 +179,9 @@ class WorkflowEngine:
                 step_run.latency_ms = round((time.perf_counter() - started) * 1000, 3)
                 await session.commit()
                 return output
+            except WorkerLeaseLostError:
+                await session.rollback()
+                raise
             except Exception as exc:
                 last_error = exc
                 step_run.error = f"{type(exc).__name__}: {exc}"
