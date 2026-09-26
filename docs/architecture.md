@@ -52,6 +52,11 @@ sequenceDiagram
 
 The provider boundary returns a normalized `LLMResult`, preventing provider response shapes from leaking into the engine. The tool boundary is intentionally narrow: an async callable from JSON-compatible input to output. Registries use explicit allowlists, so workflow definitions cannot import arbitrary Python code.
 
+LLM steps may declare an ordered fallback chain. The engine tries the primary provider followed by
+each fallback within the existing step timeout and retry boundary. Only the successful provider is
+persisted on `StepRun`; failed provider attempts emit structured logs without provider exception
+messages, reducing the chance of logging sensitive response data.
+
 ## Reference model
 
 Steps can refer to `${input.key}` or `${steps.step-key.output}`. References are resolved recursively inside dictionaries and lists. Full-value references preserve their JSON type; interpolation into a larger string produces text.

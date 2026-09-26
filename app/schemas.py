@@ -15,6 +15,7 @@ class WorkflowStep(BaseModel):
     key: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,79}$")
     type: Literal["llm", "tool"]
     provider: str | None = None
+    fallback_providers: list[str] = Field(default_factory=list, max_length=5)
     tool: str | None = None
     input: Any = None
     timeout_seconds: float | None = Field(default=None, gt=0, le=300)
@@ -26,6 +27,13 @@ class WorkflowStep(BaseModel):
             raise ValueError("LLM steps cannot specify a tool")
         if self.type == "tool" and not self.tool:
             raise ValueError("Tool steps must specify a tool")
+        if self.type == "tool" and self.fallback_providers:
+            raise ValueError("Tool steps cannot specify fallback providers")
+        if any(not name or len(name) > 80 for name in self.fallback_providers):
+            raise ValueError("Fallback provider names must contain 1 to 80 characters")
+        provider_chain = [self.provider or "fake", *self.fallback_providers]
+        if len(provider_chain) != len(set(provider_chain)):
+            raise ValueError("Provider fallback chain must not contain duplicates")
         return self
 
 
@@ -76,6 +84,7 @@ class StepRunRead(BaseModel):
     prompt_tokens: int | None
     completion_tokens: int | None
     estimated_cost_usd: float | None
+    provider: str | None
     started_at: datetime | None
     completed_at: datetime | None
 

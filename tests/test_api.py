@@ -72,6 +72,7 @@ async def test_execute_workflow_and_record_metrics(client: AsyncClient) -> None:
     assert run["output"].endswith("EXPLAIN IDEMPOTENCY")
     assert [step["status"] for step in run["steps"]] == ["completed", "completed"]
     assert run["steps"][0]["prompt_tokens"] > 0
+    assert run["steps"][0]["provider"] == "fake"
     assert run["steps"][0]["latency_ms"] >= 0
 
     fetched = await client.get(f"/v1/runs/{run['id']}")

@@ -1,8 +1,10 @@
 import asyncio
+from typing import Any
 
 from app.config import Settings
-from app.engine import WorkflowEngine, resolve_references
+from app.engine import AllProvidersFailedError, WorkflowEngine, resolve_references
 from app.models import RunStatus, Workflow, WorkflowRun
+from app.providers import LLMResult, ProviderRegistry
 from app.schemas import WorkflowDefinition
 from app.tools import ToolRegistry
 from tests.conftest import TestSession
@@ -89,3 +91,90 @@ async def test_timeout_marks_step_and_run_failed() -> None:
     assert result.status == RunStatus.failed
     assert result.steps[0].status == RunStatus.failed
     assert "TimeoutError" in (result.steps[0].error or "")
+
+
+async def test_llm_step_falls_back_and_records_selected_provider() -> None:
+    class FailingProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            raise RuntimeError("primary unavailable")
+
+    class BackupProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            return LLMResult(
+                output=f"backup: {prompt}",
+                prompt_tokens=1,
+                completion_tokens=2,
+                estimated_cost_usd=0.01,
+            )
+
+    providers = ProviderRegistry()
+    providers.register("primary", FailingProvider())
+    providers.register("backup", BackupProvider())
+    definition = WorkflowDefinition.model_validate(
+        {
+            "steps": [
+                {
+                    "key": "generate",
+                    "type": "llm",
+                    "provider": "primary",
+                    "fallback_providers": ["backup"],
+                    "input": "hello",
+                }
+            ]
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Fallback", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), providers=providers).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.completed
+    assert result.output == "backup: hello"
+    assert result.steps[0].provider == "backup"
+    assert result.steps[0].attempts == 1
+
+
+async def test_llm_step_fails_after_exhausting_provider_chain() -> None:
+    class FailingProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            raise RuntimeError("unavailable")
+
+    providers = ProviderRegistry()
+    providers.register("primary", FailingProvider())
+    providers.register("backup", FailingProvider())
+    definition = WorkflowDefinition.model_validate(
+        {
+            "steps": [
+                {
+                    "key": "generate",
+                    "type": "llm",
+                    "provider": "primary",
+                    "fallback_providers": ["backup"],
+                    "input": "hello",
+                }
+            ]
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Failure", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), providers=providers).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.failed
+    assert AllProvidersFailedError.__name__ in (result.error or "")
+    assert "primary, backup" in (result.error or "")
+    assert result.steps[0].provider is None
