@@ -39,7 +39,9 @@ Emit OpenTelemetry spans using run and step IDs, while keeping prompts and outpu
 
 ### Provider reliability
 
-Add circuit breakers, rate-limit aware retry hints, fallback policy, request cancellation, and normalized error classes. Retry only failures known to be transient; never retry a non-idempotent operation blindly.
+Ordered provider fallback is supported and records the provider that succeeds. Add circuit breakers,
+rate-limit-aware retry hints, request cancellation, per-provider timeout policy, and normalized error
+classes. Retry only failures known to be transient; never retry a non-idempotent operation blindly.
 
 ### Database operations
 

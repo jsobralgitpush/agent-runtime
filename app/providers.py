@@ -9,6 +9,7 @@ class LLMResult:
     prompt_tokens: int
     completion_tokens: int
     estimated_cost_usd: float
+    provider: str | None = None
 
 
 class LLMProvider(Protocol):

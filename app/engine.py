@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import time
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -20,6 +21,10 @@ REFERENCE = re.compile(r"\$\{(input|steps)\.([a-zA-Z0-9_-]+)(?:\.output)?\}")
 
 
 class WorkerLeaseLostError(RuntimeError):
+    pass
+
+
+class AllProvidersFailedError(RuntimeError):
     pass
 
 
@@ -174,6 +179,7 @@ class WorkflowEngine:
                     step_run.prompt_tokens = result.prompt_tokens
                     step_run.completion_tokens = result.completion_tokens
                     step_run.estimated_cost_usd = result.estimated_cost_usd
+                    step_run.provider = result.provider
                 step_run.status = RunStatus.completed
                 step_run.completed_at = datetime.now(UTC)
                 step_run.latency_ms = round((time.perf_counter() - started) * 1000, 3)
@@ -199,7 +205,26 @@ class WorkflowEngine:
     async def _dispatch(self, step: WorkflowStep, value: Any, run_id: str) -> Any:
         if step.type == "llm":
             prompt = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
-            provider = self.providers.get(step.provider or "fake")
-            return await provider.complete(prompt, metadata={"run_id": run_id, "step": step.key})
+            provider_names = [step.provider or "fake", *step.fallback_providers]
+            for provider_name in provider_names:
+                try:
+                    provider = self.providers.get(provider_name)
+                    result = await provider.complete(
+                        prompt,
+                        metadata={"run_id": run_id, "step": step.key},
+                    )
+                    return replace(result, provider=provider_name)
+                except Exception as exc:
+                    logger.warning(
+                        "llm_provider_failed",
+                        extra={
+                            "run_id": run_id,
+                            "step_key": step.key,
+                            "provider": provider_name,
+                            "error_type": type(exc).__name__,
+                        },
+                    )
+            provider_list = ", ".join(provider_names)
+            raise AllProvidersFailedError(f"All LLM providers failed: {provider_list}")
         assert step.tool is not None
         return await self.tools.get(step.tool)(value)

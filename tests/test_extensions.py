@@ -1,6 +1,8 @@
 import pytest
+from pydantic import ValidationError
 
 from app.providers import FakeLLMProvider, ProviderRegistry
+from app.schemas import WorkflowDefinition
 from app.tools import ToolRegistry, echo, extract_field, uppercase
 
 
@@ -26,6 +28,36 @@ def test_tool_registry_guards_names() -> None:
         registry.get("missing")
     with pytest.raises(ValueError, match="already registered"):
         registry.register("echo", echo)
+
+
+def test_workflow_rejects_invalid_provider_fallback_chains() -> None:
+    with pytest.raises(ValidationError, match="must not contain duplicates"):
+        WorkflowDefinition.model_validate(
+            {
+                "steps": [
+                    {
+                        "key": "generate",
+                        "type": "llm",
+                        "provider": "primary",
+                        "fallback_providers": ["primary"],
+                    }
+                ]
+            }
+        )
+
+    with pytest.raises(ValidationError, match="Tool steps cannot specify"):
+        WorkflowDefinition.model_validate(
+            {
+                "steps": [
+                    {
+                        "key": "publish",
+                        "type": "tool",
+                        "tool": "echo",
+                        "fallback_providers": ["backup"],
+                    }
+                ]
+            }
+        )
 
 
 async def test_provider_registry_and_fake_provider() -> None:

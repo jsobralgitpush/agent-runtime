@@ -9,6 +9,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - FastAPI API and typed Pydantic contracts
 - PostgreSQL persistence with SQLAlchemy and Alembic
 - Pluggable LLM providers and tool registry
+- Ordered LLM provider fallback with selected-provider telemetry
 - Deterministic local execution without API credentials
 - Exponential retry backoff and per-step timeouts
 - Idempotent run creation under concurrent requests
@@ -112,7 +113,10 @@ This runs Ruff lint/format checks, strict mypy, and the pytest suite with covera
 
 ## Built-in extensions
 
-LLM providers implement the `LLMProvider` protocol and are registered in `ProviderRegistry`. Tools are async callables registered in `ToolRegistry`. v0.1 ships `fake`, `echo`, `uppercase`, and `extract_field` implementations.
+LLM providers implement the `LLMProvider` protocol and are registered in `ProviderRegistry`. An
+LLM step can define up to five ordered `fallback_providers`; the first successful provider is stored
+on the step run. Tools are async callables registered in `ToolRegistry`. The runtime ships `fake`,
+`echo`, `uppercase`, and `extract_field` implementations.
 
 ## API endpoints
 
@@ -128,7 +132,7 @@ LLM providers implement the `LLMProvider` protocol and are registered in `Provid
 ## Roadmap
 
 - v0.2: database-backed workers, leases, heartbeats, and terminal expired-run recovery; resumable recovery next
-- v0.3: OpenAI/Anthropic adapters, encrypted credentials, and provider fallback
+- v0.3: provider fallback (initial delivery), then OpenAI/Anthropic adapters and encrypted credentials
 - v0.4: DAG execution, parallel branches, and human approval steps
 - v0.5: OpenTelemetry traces, Prometheus metrics, evaluation datasets, and budgets
 
