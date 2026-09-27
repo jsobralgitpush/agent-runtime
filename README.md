@@ -9,6 +9,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - FastAPI API and typed Pydantic contracts
 - PostgreSQL persistence with SQLAlchemy and Alembic
 - Pluggable LLM providers and tool registry
+- Optional OpenAI Responses API provider configured from the environment
 - Ordered LLM provider fallback with selected-provider telemetry
 - Deterministic local execution without API credentials
 - Exponential retry backoff and per-step timeouts
@@ -116,7 +117,9 @@ This runs Ruff lint/format checks, strict mypy, and the pytest suite with covera
 LLM providers implement the `LLMProvider` protocol and are registered in `ProviderRegistry`. An
 LLM step can define up to five ordered `fallback_providers`; the first successful provider is stored
 on the step run. Tools are async callables registered in `ToolRegistry`. The runtime ships `fake`,
-`echo`, `uppercase`, and `extract_field` implementations.
+`echo`, `uppercase`, and `extract_field` implementations. Set `OPENAI_API_KEY` to register the
+`openai` provider; `OPENAI_MODEL` defaults to `gpt-5-mini`. The key is read from the process
+environment and is never stored in a workflow or run.
 
 ## API endpoints
 
@@ -132,7 +135,7 @@ on the step run. Tools are async callables registered in `ToolRegistry`. The run
 ## Roadmap
 
 - v0.2: database-backed workers, leases, heartbeats, and terminal expired-run recovery; resumable recovery next
-- v0.3: provider fallback (initial delivery), then OpenAI/Anthropic adapters and encrypted credentials
+- v0.3: provider fallback and OpenAI adapter delivered; Anthropic and encrypted credentials next
 - v0.4: DAG execution, parallel branches, and human approval steps
 - v0.5: OpenTelemetry traces, Prometheus metrics, evaluation datasets, and budgets
 

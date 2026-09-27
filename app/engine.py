@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.models import RunStatus, StepRun, WorkflowRun
-from app.providers import LLMResult, ProviderRegistry
+from app.providers import LLMResult, ProviderRegistry, build_provider_registry
 from app.schemas import WorkflowDefinition, WorkflowStep
 from app.tools import ToolRegistry
 
@@ -85,7 +85,7 @@ class WorkflowEngine:
         tools: ToolRegistry | None = None,
     ) -> None:
         self.settings = settings
-        self.providers = providers or ProviderRegistry()
+        self.providers = providers or build_provider_registry(settings)
         self.tools = tools or ToolRegistry()
 
     async def execute(

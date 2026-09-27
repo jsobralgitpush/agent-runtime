@@ -31,7 +31,11 @@ Add authentication, tenant ownership columns, row-level authorization, rate limi
 
 ### Secret handling
 
-Load provider credentials from a secret manager and inject them into adapters at runtime. Never place credentials inside workflow definitions, run inputs, step outputs, or exception messages. Encrypt sensitive persisted payloads and define retention controls.
+The OpenAI adapter accepts an environment-injected API key and never persists it in workflow data.
+For production, source provider credentials from a cloud secret manager rather than a checked-in
+`.env` file. Rotate keys, audit access, and add encrypted tenant-scoped credentials before allowing
+users to manage their own providers. Encrypt sensitive persisted payloads and define retention
+controls.
 
 ### Observability
 
@@ -39,7 +43,7 @@ Emit OpenTelemetry spans using run and step IDs, while keeping prompts and outpu
 
 ### Provider reliability
 
-Ordered provider fallback is supported and records the provider that succeeds. Add circuit breakers,
+Ordered provider fallback and the OpenAI Responses adapter are supported. Add circuit breakers,
 rate-limit-aware retry hints, request cancellation, per-provider timeout policy, and normalized error
 classes. Retry only failures known to be transient; never retry a non-idempotent operation blindly.
 
