@@ -57,6 +57,11 @@ each fallback within the existing step timeout and retry boundary. Only the succ
 persisted on `StepRun`; failed provider attempts emit structured logs without provider exception
 messages, reducing the chance of logging sensitive response data.
 
+When `OPENAI_API_KEY` is configured, the provider registry also exposes `openai`. Its adapter calls
+the Responses API with storage disabled, passes run and step IDs as metadata, and normalizes text and
+token usage into the same `LLMResult` used by the fake provider. Credentials remain process-level
+configuration and are not part of persisted workflow definitions.
+
 ## Reference model
 
 Steps can refer to `${input.key}` or `${steps.step-key.output}`. References are resolved recursively inside dictionaries and lists. Full-value references preserve their JSON type; interpolation into a larger string produces text.
