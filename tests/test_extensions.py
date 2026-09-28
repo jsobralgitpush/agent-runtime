@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from app.config import Settings
 from app.providers import (
+    AnthropicProvider,
     FakeLLMProvider,
     OpenAIProvider,
     ProviderRegistry,
@@ -148,3 +149,69 @@ def test_openai_provider_is_registered_only_when_configured() -> None:
         Settings(app_env="test", openai_api_key="test-secret", openai_model="test-model")
     )
     assert isinstance(configured.get("openai"), OpenAIProvider)
+
+
+async def test_anthropic_provider_uses_messages_api_and_normalizes_result() -> None:
+    async def respond(request: httpx.Request) -> httpx.Response:
+        assert request.url == "https://api.anthropic.test/v1/messages"
+        assert request.headers["Authorization"] == "Bearer test-secret"
+        assert request.headers["anthropic-version"] == "2023-06-01"
+        assert json.loads(request.content) == {
+            "model": "test-model",
+            "max_tokens": 512,
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+        return httpx.Response(
+            200,
+            json={
+                "content": [
+                    {"type": "thinking", "thinking": "internal"},
+                    {"type": "text", "text": "Hello from Claude"},
+                ],
+                "usage": {"input_tokens": 4, "output_tokens": 3},
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        provider = AnthropicProvider(
+            api_key="test-secret",
+            model="test-model",
+            max_tokens=512,
+            base_url="https://api.anthropic.test/v1/",
+            client=client,
+        )
+        result = await provider.complete("Hello", metadata={"run_id": "run-1"})
+
+    assert result.output == "Hello from Claude"
+    assert result.prompt_tokens == 4
+    assert result.completion_tokens == 3
+    assert result.estimated_cost_usd is None
+
+
+async def test_anthropic_provider_rejects_response_without_text() -> None:
+    async def respond(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"content": [], "usage": {}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        provider = AnthropicProvider(api_key="secret", model="model", max_tokens=512, client=client)
+        with pytest.raises(ValueError, match="did not contain output text"):
+            await provider.complete("Hello", metadata={})
+
+
+def test_anthropic_provider_is_registered_only_when_configured() -> None:
+    unconfigured = build_provider_registry(Settings(app_env="test", anthropic_api_key=None))
+    with pytest.raises(ValueError, match="Unknown LLM provider"):
+        unconfigured.get("anthropic")
+    empty = build_provider_registry(Settings(app_env="test", anthropic_api_key=""))
+    with pytest.raises(ValueError, match="Unknown LLM provider"):
+        empty.get("anthropic")
+
+    configured = build_provider_registry(
+        Settings(
+            app_env="test",
+            anthropic_api_key="test-secret",
+            anthropic_model="test-model",
+            anthropic_max_tokens=512,
+        )
+    )
+    assert isinstance(configured.get("anthropic"), AnthropicProvider)

@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     openai_model: str = Field(default="gpt-5-mini", min_length=1, max_length=120)
     openai_base_url: str = Field(default="https://api.openai.com/v1", min_length=1)
+    anthropic_api_key: SecretStr | None = None
+    anthropic_model: str = Field(default="claude-sonnet-5", min_length=1, max_length=120)
+    anthropic_base_url: str = Field(default="https://api.anthropic.com/v1", min_length=1)
+    anthropic_max_tokens: int = Field(default=4096, ge=1, le=128_000)
 
     @model_validator(mode="after")
     def heartbeat_precedes_lease_expiry(self) -> Self:

@@ -62,6 +62,10 @@ the Responses API with storage disabled, passes run and step IDs as metadata, an
 token usage into the same `LLMResult` used by the fake provider. Credentials remain process-level
 configuration and are not part of persisted workflow definitions.
 
+The `anthropic` adapter is registered under the same rule when `ANTHROPIC_API_KEY` is present. It
+calls the Messages API with a bounded output-token budget and normalizes text blocks and token usage.
+Non-text blocks such as model thinking remain outside the runtime's provider-neutral result shape.
+
 ## Reference model
 
 Steps can refer to `${input.key}` or `${steps.step-key.output}`. References are resolved recursively inside dictionaries and lists. Full-value references preserve their JSON type; interpolation into a larger string produces text.
