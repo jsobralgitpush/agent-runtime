@@ -31,11 +31,11 @@ Add authentication, tenant ownership columns, row-level authorization, rate limi
 
 ### Secret handling
 
-The OpenAI adapter accepts an environment-injected API key and never persists it in workflow data.
-For production, source provider credentials from a cloud secret manager rather than a checked-in
-`.env` file. Rotate keys, audit access, and add encrypted tenant-scoped credentials before allowing
-users to manage their own providers. Encrypt sensitive persisted payloads and define retention
-controls.
+The OpenAI and Anthropic adapters accept environment-injected API keys and never persist them in
+workflow data. For production, source provider credentials from a cloud secret manager rather than
+a checked-in `.env` file. Rotate keys, audit access, and add encrypted tenant-scoped credentials
+before allowing users to manage their own providers. Encrypt sensitive persisted payloads and define
+retention controls.
 
 ### Observability
 
@@ -43,9 +43,10 @@ Emit OpenTelemetry spans using run and step IDs, while keeping prompts and outpu
 
 ### Provider reliability
 
-Ordered provider fallback and the OpenAI Responses adapter are supported. Add circuit breakers,
-rate-limit-aware retry hints, request cancellation, per-provider timeout policy, and normalized error
-classes. Retry only failures known to be transient; never retry a non-idempotent operation blindly.
+Ordered provider fallback plus OpenAI Responses and Anthropic Messages adapters are supported. Add
+circuit breakers, rate-limit-aware retry hints, request cancellation, per-provider timeout policy,
+and normalized error classes. Retry only failures known to be transient; never retry a
+non-idempotent operation blindly.
 
 ### Database operations
 
