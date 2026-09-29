@@ -40,6 +40,10 @@ sequenceDiagram
 
 `app/api.py` owns HTTP behavior only: validation, resource lookup, idempotent creation, and response serialization. It does not know provider-specific details.
 
+An ASGI middleware records Prometheus request counts, duration, and current concurrency. Labels use
+the matched route template rather than the request path, so workflow and run IDs cannot create an
+unbounded time-series set. The scrape endpoint is excluded from its own metrics.
+
 ### Domain and persistence
 
 `Workflow` stores the immutable definition used for new runs. `WorkflowRun` stores lifecycle state and final output. `StepRun` is both the audit trail and the unit of observability, including attempt count, latency, tokens, cost, and error.

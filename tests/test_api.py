@@ -5,6 +5,7 @@ from httpx import AsyncClient
 
 from app.config import Settings
 from app.engine import WorkerLeaseLostError, assert_active_lease
+from app.metrics import METRICS_CONTENT_TYPE
 from app.models import RunStatus, StepRun, WorkflowRun
 from app.worker import (
     LEASE_EXPIRED_ERROR,
@@ -48,6 +49,39 @@ async def test_health(client: AsyncClient) -> None:
     response = await client.get("/v1/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+async def test_prometheus_metrics_use_bounded_route_labels(client: AsyncClient) -> None:
+    await client.get("/v1/health")
+    await client.get("/v1/runs/missing-run")
+    await client.get("/v1/not-a-real-route/123")
+    await client.request("CUSTOM", "/v1/health")
+
+    response = await client.get("/v1/metrics")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == METRICS_CONTENT_TYPE
+    assert (
+        'agent_runtime_http_requests_total{method="GET",route="/v1/health",status_code="200"}'
+        in response.text
+    )
+    assert (
+        'agent_runtime_http_requests_total{method="GET",route="/v1/runs/{run_id}",'
+        'status_code="404"}' in response.text
+    )
+    assert "agent_runtime_http_request_duration_seconds_bucket" in response.text
+    assert "agent_runtime_http_requests_in_progress" in response.text
+    assert (
+        'agent_runtime_http_requests_total{method="GET",route="unmatched",status_code="404"}'
+        in response.text
+    )
+    assert (
+        'agent_runtime_http_requests_total{method="OTHER",route="/v1/health",status_code="405"}'
+        in response.text
+    )
+    assert "missing-run" not in response.text
+    assert "not-a-real-route" not in response.text
+    assert 'route="/v1/metrics"' not in response.text
 
 
 async def test_create_list_and_get_workflow(client: AsyncClient) -> None:

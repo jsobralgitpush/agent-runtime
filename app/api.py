@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app.database import get_session
 from app.engine import WorkflowEngine
+from app.metrics import METRICS_CONTENT_TYPE, render_metrics
 from app.models import Workflow, WorkflowRun
 from app.schemas import (
     HealthRead,
@@ -26,6 +27,14 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 @router.get("/health", response_model=HealthRead, tags=["operations"])
 async def health() -> HealthRead:
     return HealthRead()
+
+
+@router.get("/metrics", tags=["operations"], response_class=Response)
+async def metrics() -> Response:
+    return Response(
+        content=render_metrics(),
+        headers={"Content-Type": METRICS_CONTENT_TYPE},
+    )
 
 
 @router.post("/workflows", response_model=WorkflowRead, status_code=status.HTTP_201_CREATED)

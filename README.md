@@ -17,6 +17,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Optional deferred execution through database workers with renewable leases
 - Conservative recovery of expired worker leases without automatic side-effect replay
 - Latency, token, cost, input, output, and error recording per step
+- Prometheus HTTP request rate, error, latency, and in-progress metrics
 - JSON structured logging, Docker Compose, tests, type checking, linting, and CI
 
 ## Architecture
@@ -49,6 +50,9 @@ make demo
 ```
 
 The demo creates a two-step workflow (fake LLM, then uppercase tool), runs it with an idempotency key, and prints the recorded run.
+
+Prometheus metrics are available at <http://localhost:8000/v1/metrics>. They use HTTP method,
+matched route template, and status code labels; concrete resource IDs are never used as labels.
 
 ## Local development
 
@@ -128,6 +132,7 @@ environment and is never stored in a workflow or run. Set `ANTHROPIC_API_KEY` to
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/v1/health` | Liveness check |
+| `GET` | `/v1/metrics` | Prometheus HTTP RED metrics |
 | `POST` | `/v1/workflows` | Validate and persist a workflow |
 | `GET` | `/v1/workflows` | List workflows |
 | `GET` | `/v1/workflows/{id}` | Inspect a workflow |
@@ -139,7 +144,7 @@ environment and is never stored in a workflow or run. Set `ANTHROPIC_API_KEY` to
 - v0.2: database-backed workers, leases, heartbeats, and terminal expired-run recovery; resumable recovery next
 - v0.3: provider fallback plus OpenAI and Anthropic adapters delivered; encrypted credentials next
 - v0.4: DAG execution, parallel branches, and human approval steps
-- v0.5: OpenTelemetry traces, Prometheus metrics, evaluation datasets, and budgets
+- v0.5: Prometheus HTTP metrics delivered; OpenTelemetry traces, evaluation datasets, and budgets next
 
 ## License
 
