@@ -7,6 +7,7 @@ from app.api import router
 from app.config import get_settings
 from app.database import engine
 from app.logging import configure_logging
+from app.metrics import API_PREFIX, PrometheusMiddleware
 from app.models import Base
 
 settings = get_settings()
@@ -27,4 +28,5 @@ app = FastAPI(
     description="Durable, observable execution for sequential AI workflows.",
     lifespan=lifespan,
 )
-app.include_router(router, prefix="/v1")
+app.add_middleware(PrometheusMiddleware)
+app.include_router(router, prefix=API_PREFIX)

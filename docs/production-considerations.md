@@ -8,6 +8,7 @@ v0.1 demonstrates production concerns but is not presented as a finished multi-t
 - Provider and tool implementations are allowlisted, not dynamically imported.
 - Workflow size, identifiers, retries, and timeouts have validation bounds.
 - Each execution boundary records status, attempts, latency, output, usage, cost, and errors.
+- `/v1/metrics` exposes low-cardinality HTTP request, error, latency, and concurrency metrics.
 - The container uses a non-root user.
 - CI has read-only repository permissions and a frozen dependency installation.
 - The fake provider enables deterministic tests without sending data externally.
@@ -39,7 +40,13 @@ retention controls.
 
 ### Observability
 
-Emit OpenTelemetry spans using run and step IDs, while keeping prompts and outputs opt-in because they may contain personal data. Add RED metrics, retry counts, stuck-run alerts, token/cost budgets, and provider error classification.
+HTTP RED metrics use matched route templates and exclude resource IDs and payloads. Protect the
+scrape endpoint at the network layer in production. The in-memory registry is process-local; a
+multi-process deployment needs Prometheus multiprocess mode or one scrape target per process.
+
+Emit OpenTelemetry spans using run and step IDs, while keeping prompts and outputs opt-in because
+they may contain personal data. Add workflow/worker metrics, retry counts, stuck-run alerts,
+token/cost budgets, and provider error classification.
 
 ### Provider reliability
 
