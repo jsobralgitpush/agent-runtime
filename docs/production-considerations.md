@@ -7,6 +7,7 @@ v0.1 demonstrates production concerns but is not presented as a finished multi-t
 - Database uniqueness is the source of truth for request idempotency.
 - Provider and tool implementations are allowlisted, not dynamically imported.
 - Workflow size, identifiers, retries, and timeouts have validation bounds.
+- Workflows can bound provider/tool calls and retry backoffs with a cumulative time budget.
 - Each execution boundary records status, attempts, latency, output, usage, cost, and errors.
 - `/v1/metrics` exposes low-cardinality HTTP request, error, latency, and concurrency metrics.
 - The container uses a non-root user.
@@ -46,7 +47,8 @@ multi-process deployment needs Prometheus multiprocess mode or one scrape target
 
 Emit OpenTelemetry spans using run and step IDs, while keeping prompts and outputs opt-in because
 they may contain personal data. Add workflow/worker metrics, retry counts, stuck-run alerts,
-token/cost budgets, and provider error classification.
+token/cost budgets, and provider error classification. The time budget bounds engine work at safe
+execution boundaries but is not a tenant quota or substitute for worker isolation.
 
 ### Provider reliability
 

@@ -79,10 +79,17 @@ This intentionally avoids an embedded expression language in v0.1. Expression en
 ## Failure semantics
 
 - Provider and tool calls have bounded timeouts.
+- A workflow may define a cumulative wall-clock budget across calls and retry backoffs.
 - A retry policy controls maximum attempts and exponential backoff.
 - A failed step fails the run and prevents later steps from executing.
 - Completed prior steps are retained for diagnosis.
 - Error strings are recorded; production adapters must redact secrets before raising.
+
+The workflow budget and step timeout are independent: the smaller remaining duration controls each
+attempt. Exhausting the workflow budget cancels the active call, marks that step and the run failed
+with `WorkflowTimeBudgetExceededError`, and prevents later steps from starting. The engine checks the
+deadline at safe boundaries; it allows an active database transaction to finish, and that elapsed
+time reduces the budget available to the next call.
 
 ## Data model
 
