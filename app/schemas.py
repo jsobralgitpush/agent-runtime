@@ -38,6 +38,7 @@ class WorkflowStep(BaseModel):
 
 
 class WorkflowDefinition(BaseModel):
+    max_runtime_seconds: float | None = Field(default=None, gt=0, le=3600)
     steps: list[WorkflowStep] = Field(min_length=1, max_length=50)
 
     @model_validator(mode="after")

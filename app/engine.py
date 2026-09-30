@@ -28,6 +28,29 @@ class AllProvidersFailedError(RuntimeError):
     pass
 
 
+class WorkflowTimeBudgetExceededError(TimeoutError):
+    pass
+
+
+def remaining_time_budget(deadline: float | None) -> float | None:
+    if deadline is None:
+        return None
+    remaining = deadline - time.perf_counter()
+    if remaining <= 0:
+        raise WorkflowTimeBudgetExceededError("Workflow execution time budget exhausted")
+    return remaining
+
+
+async def wait_for_retry(delay: float, deadline: float | None) -> None:
+    remaining = remaining_time_budget(deadline)
+    if remaining is None:
+        await asyncio.sleep(delay)
+        return
+    await asyncio.sleep(min(delay, remaining))
+    if delay >= remaining:
+        raise WorkflowTimeBudgetExceededError("Workflow execution time budget exhausted")
+
+
 async def assert_active_lease(
     session: AsyncSession,
     run_id: str,
@@ -104,9 +127,15 @@ class WorkflowEngine:
         logger.info(
             "workflow_run_started", extra={"run_id": run.id, "workflow_id": run.workflow_id}
         )
+        deadline = (
+            time.perf_counter() + definition.max_runtime_seconds
+            if definition.max_runtime_seconds is not None
+            else None
+        )
 
         try:
             for position, step in enumerate(definition.steps):
+                remaining_time_budget(deadline)
                 step_run = StepRun(
                     run_id=run.id,
                     step_key=step.key,
@@ -123,6 +152,7 @@ class WorkflowEngine:
                     step_run,
                     outputs,
                     lease_owner,
+                    deadline,
                 )
                 outputs[step.key] = output
             run.status = RunStatus.completed
@@ -154,6 +184,7 @@ class WorkflowEngine:
         step_run: StepRun,
         outputs: dict[str, Any],
         lease_owner: str | None,
+        deadline: float | None,
     ) -> Any:
         resolved_input = resolve_references(step.input, run.inputs, outputs)
         step_run.input = resolved_input
@@ -168,8 +199,10 @@ class WorkflowEngine:
             step_run.attempts = attempt
             await session.commit()
             try:
+                remaining = remaining_time_budget(deadline)
+                attempt_timeout = min(timeout, remaining) if remaining is not None else timeout
                 result = await asyncio.wait_for(
-                    self._dispatch(step, resolved_input, run.id), timeout=timeout
+                    self._dispatch(step, resolved_input, run.id), timeout=attempt_timeout
                 )
                 if lease_owner is not None:
                     await assert_active_lease(session, run.id, lease_owner)
@@ -189,17 +222,34 @@ class WorkflowEngine:
                 await session.rollback()
                 raise
             except Exception as exc:
+                if (
+                    isinstance(exc, TimeoutError)
+                    and deadline is not None
+                    and time.perf_counter() >= deadline
+                ):
+                    exc = WorkflowTimeBudgetExceededError(
+                        "Workflow execution time budget exhausted"
+                    )
                 last_error = exc
                 step_run.error = f"{type(exc).__name__}: {exc}"
                 await session.commit()
+                if isinstance(exc, WorkflowTimeBudgetExceededError):
+                    break
                 if attempt < max_attempts:
-                    await asyncio.sleep(step.retry.backoff_seconds * (2 ** (attempt - 1)))
+                    try:
+                        await wait_for_retry(
+                            step.retry.backoff_seconds * (2 ** (attempt - 1)), deadline
+                        )
+                    except WorkflowTimeBudgetExceededError as budget_error:
+                        last_error = budget_error
+                        break
 
         step_run.status = RunStatus.failed
+        assert last_error is not None
+        step_run.error = f"{type(last_error).__name__}: {last_error}"
         step_run.completed_at = datetime.now(UTC)
         step_run.latency_ms = round((time.perf_counter() - started) * 1000, 3)
         await session.commit()
-        assert last_error is not None
         raise last_error
 
     async def _dispatch(self, step: WorkflowStep, value: Any, run_id: str) -> Any:

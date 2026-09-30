@@ -2,7 +2,12 @@ import asyncio
 from typing import Any
 
 from app.config import Settings
-from app.engine import AllProvidersFailedError, WorkflowEngine, resolve_references
+from app.engine import (
+    AllProvidersFailedError,
+    WorkflowEngine,
+    WorkflowTimeBudgetExceededError,
+    resolve_references,
+)
 from app.models import RunStatus, Workflow, WorkflowRun
 from app.providers import LLMResult, ProviderRegistry
 from app.schemas import WorkflowDefinition
@@ -91,6 +96,89 @@ async def test_timeout_marks_step_and_run_failed() -> None:
     assert result.status == RunStatus.failed
     assert result.steps[0].status == RunStatus.failed
     assert "TimeoutError" in (result.steps[0].error or "")
+
+
+async def test_workflow_time_budget_stops_active_step() -> None:
+    async def slow(value: object) -> object:
+        await asyncio.sleep(0.2)
+        return value
+
+    tools = ToolRegistry()
+    tools.register("slow", slow)
+    definition = WorkflowDefinition.model_validate(
+        {
+            "max_runtime_seconds": 0.05,
+            "steps": [
+                {
+                    "key": "slow",
+                    "type": "tool",
+                    "tool": "slow",
+                    "input": "late",
+                    "timeout_seconds": 1,
+                    "retry": {"max_attempts": 2, "backoff_seconds": 0},
+                }
+            ],
+        }
+    )
+    async with TestSession() as session:
+        workflow = Workflow(name="Budget", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), tools=tools).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.failed
+    assert WorkflowTimeBudgetExceededError.__name__ in (result.error or "")
+    assert len(result.steps) == 1
+    assert result.steps[0].status == RunStatus.failed
+    assert WorkflowTimeBudgetExceededError.__name__ in (result.steps[0].error or "")
+    assert result.steps[0].attempts == 1
+
+
+async def test_workflow_time_budget_includes_retry_backoff() -> None:
+    attempts = 0
+
+    async def failing(value: object) -> object:
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError(f"failure: {value}")
+
+    tools = ToolRegistry()
+    tools.register("failing", failing)
+    definition = WorkflowDefinition.model_validate(
+        {
+            "max_runtime_seconds": 0.05,
+            "steps": [
+                {
+                    "key": "retry",
+                    "type": "tool",
+                    "tool": "failing",
+                    "input": "retry",
+                    "retry": {"max_attempts": 3, "backoff_seconds": 0.2},
+                }
+            ],
+        }
+    )
+    async with TestSession() as session:
+        workflow = Workflow(name="Backoff budget", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), tools=tools).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.failed
+    assert WorkflowTimeBudgetExceededError.__name__ in (result.error or "")
+    assert WorkflowTimeBudgetExceededError.__name__ in (result.steps[0].error or "")
+    assert result.steps[0].attempts == 1
+    assert attempts == 1
 
 
 async def test_llm_step_falls_back_and_records_selected_provider() -> None:

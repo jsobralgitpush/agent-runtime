@@ -13,6 +13,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Ordered LLM provider fallback with selected-provider telemetry
 - Deterministic local execution without API credentials
 - Exponential retry backoff and per-step timeouts
+- Optional workflow-wide execution time budgets
 - Idempotent run creation under concurrent requests
 - Optional deferred execution through database workers with renewable leases
 - Conservative recovery of expired worker leases without automatic side-effect replay
@@ -77,7 +78,7 @@ curl -X POST http://localhost:8000/v1/workflows \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "Reliable writer",
-    "definition": {"steps": [
+    "definition": {"max_runtime_seconds": 60, "steps": [
       {"key": "draft", "type": "llm", "provider": "fake", "input": "Explain ${input.topic}"},
       {"key": "publish", "type": "tool", "tool": "uppercase", "input": "${steps.draft.output}"}
     ]}
@@ -107,6 +108,11 @@ releases it after the run finishes. Before claiming new work, workers mark expir
 incomplete steps as failed. They deliberately do not replay interrupted steps automatically.
 
 References support `${input.<key>}` and `${steps.<step-key>.output}`. A reference occupying the entire value preserves JSON types; references embedded in text are stringified.
+
+Set `max_runtime_seconds` on a workflow definition to bound elapsed engine time across its steps and
+retry backoffs. This budget applies in both synchronous and worker execution; per-step
+`timeout_seconds` continues to bound each individual attempt. Provider/tool calls are cancelled at
+the deadline, while an active database transaction is allowed to reach a safe boundary.
 
 ## Quality checks
 
@@ -144,7 +150,7 @@ environment and is never stored in a workflow or run. Set `ANTHROPIC_API_KEY` to
 - v0.2: database-backed workers, leases, heartbeats, and terminal expired-run recovery; resumable recovery next
 - v0.3: provider fallback plus OpenAI and Anthropic adapters delivered; encrypted credentials next
 - v0.4: DAG execution, parallel branches, and human approval steps
-- v0.5: Prometheus HTTP metrics delivered; OpenTelemetry traces, evaluation datasets, and budgets next
+- v0.5: Prometheus HTTP metrics and workflow time budgets delivered; OpenTelemetry traces, evaluation datasets, and token/cost budgets next
 
 ## License
 

@@ -255,13 +255,24 @@ def test_worker_heartbeat_must_precede_lease_expiry() -> None:
 
 
 async def test_validation_and_not_found_responses(client: AsyncClient) -> None:
-    invalid = await client.post(
+    invalid_target = await client.post(
         "/v1/workflows",
         json={
             "name": "Invalid",
             "definition": {"steps": [{"key": "bad", "type": "tool", "input": "x"}]},
         },
     )
+    invalid_budget = await client.post(
+        "/v1/workflows",
+        json={
+            "name": "Invalid budget",
+            "definition": {
+                "max_runtime_seconds": 0,
+                "steps": [{"key": "valid", "type": "llm", "input": "x"}],
+            },
+        },
+    )
     missing = await client.get("/v1/runs/not-found")
-    assert invalid.status_code == 422
+    assert invalid_target.status_code == 422
+    assert invalid_budget.status_code == 422
     assert missing.status_code == 404
