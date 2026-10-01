@@ -19,6 +19,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Conservative recovery of expired worker leases without automatic side-effect replay
 - Latency, token, cost, input, output, and error recording per step
 - Prometheus HTTP request rate, error, latency, and in-progress metrics
+- Optional OpenTelemetry HTTP, workflow, and step traces exported over OTLP/HTTP
 - JSON structured logging, Docker Compose, tests, type checking, linting, and CI
 
 ## Architecture
@@ -54,6 +55,19 @@ The demo creates a two-step workflow (fake LLM, then uppercase tool), runs it wi
 
 Prometheus metrics are available at <http://localhost:8000/v1/metrics>. They use HTTP method,
 matched route template, and status code labels; concrete resource IDs are never used as labels.
+
+To export traces from both the API and worker, set a complete OTLP/HTTP traces endpoint and restart
+the processes:
+
+```bash
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces
+OTEL_SERVICE_NAME=agent-runtime
+```
+
+Tracing is disabled when the endpoint is absent. HTTP server spans contain standard semantic
+attributes; `workflow.run` and child `workflow.step` spans add run/workflow IDs and operational
+state. Engine spans deliberately exclude inputs, prompts, outputs, credentials, and error messages.
+The OpenTelemetry SDK also honors its standard sampler and OTLP header environment variables.
 
 ## Local development
 
@@ -150,7 +164,7 @@ environment and is never stored in a workflow or run. Set `ANTHROPIC_API_KEY` to
 - v0.2: database-backed workers, leases, heartbeats, and terminal expired-run recovery; resumable recovery next
 - v0.3: provider fallback plus OpenAI and Anthropic adapters delivered; encrypted credentials next
 - v0.4: DAG execution, parallel branches, and human approval steps
-- v0.5: Prometheus HTTP metrics and workflow time budgets delivered; OpenTelemetry traces, evaluation datasets, and token/cost budgets next
+- v0.5: Prometheus HTTP metrics, workflow time budgets, and OpenTelemetry traces delivered; evaluation datasets and token/cost budgets next
 
 ## License
 

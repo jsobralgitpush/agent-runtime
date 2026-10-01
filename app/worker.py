@@ -12,6 +12,7 @@ from app.database import SessionLocal
 from app.engine import WorkflowEngine
 from app.models import RunStatus, StepRun, WorkflowRun
 from app.schemas import WorkflowDefinition
+from app.tracing import configure_tracing
 
 logger = logging.getLogger(__name__)
 LEASE_EXPIRED_ERROR = "WorkerLeaseExpired: worker stopped heartbeating; automatic replay disabled"
@@ -197,4 +198,9 @@ async def run_worker() -> None:
 
 
 def main() -> None:
-    asyncio.run(run_worker())
+    tracer_provider = configure_tracing(get_settings())
+    try:
+        asyncio.run(run_worker())
+    finally:
+        if tracer_provider is not None:
+            tracer_provider.shutdown()

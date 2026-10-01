@@ -9,17 +9,23 @@ from app.database import engine
 from app.logging import configure_logging
 from app.metrics import API_PREFIX, PrometheusMiddleware
 from app.models import Base
+from app.tracing import configure_tracing, instrument_fastapi
 
 settings = get_settings()
 configure_logging(settings.log_level)
+tracer_provider = configure_tracing(settings)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    if settings.app_env in {"development", "test"}:
-        async with engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
-    yield
+    try:
+        if settings.app_env in {"development", "test"}:
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+        yield
+    finally:
+        if tracer_provider is not None:
+            tracer_provider.shutdown()
 
 
 app = FastAPI(
@@ -30,3 +36,4 @@ app = FastAPI(
 )
 app.add_middleware(PrometheusMiddleware)
 app.include_router(router, prefix=API_PREFIX)
+instrument_fastapi(app, tracer_provider)

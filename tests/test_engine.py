@@ -1,6 +1,11 @@
 import asyncio
 from typing import Any
 
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.sdk.trace.sampling import ALWAYS_ON
+
 from app.config import Settings
 from app.engine import (
     AllProvidersFailedError,
@@ -266,3 +271,48 @@ async def test_llm_step_fails_after_exhausting_provider_chain() -> None:
     assert AllProvidersFailedError.__name__ in (result.error or "")
     assert "primary, backup" in (result.error or "")
     assert result.steps[0].provider is None
+
+
+async def test_workflow_spans_are_nested_and_exclude_payloads() -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider(sampler=ALWAYS_ON)
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    definition = WorkflowDefinition.model_validate(
+        {
+            "steps": [
+                {
+                    "key": "generate",
+                    "type": "llm",
+                    "provider": "fake",
+                    "input": "private: ${input.secret}",
+                }
+            ]
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Traced", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={"secret": "do-not-export"})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(
+            Settings(app_env="test"),
+            tracer=provider.get_tracer("tests"),
+        ).execute(session, run, definition)
+
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    run_span = spans["workflow.run"]
+    step_span = spans["workflow.step"]
+    assert step_span.parent is not None
+    assert step_span.parent.span_id == run_span.context.span_id
+    assert run_span.attributes is not None
+    assert run_span.attributes["agent_runtime.run.id"] == result.id
+    assert run_span.attributes["agent_runtime.run.status"] == "completed"
+    assert step_span.attributes is not None
+    assert step_span.attributes["agent_runtime.step.key"] == "generate"
+    assert step_span.attributes["agent_runtime.step.provider"] == "fake"
+    assert "do-not-export" not in repr([span.attributes for span in spans.values()])
+    assert all(not span.events for span in spans.values())
+    provider.shutdown()
