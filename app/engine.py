@@ -7,6 +7,8 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode, Tracer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -106,12 +108,48 @@ class WorkflowEngine:
         settings: Settings,
         providers: ProviderRegistry | None = None,
         tools: ToolRegistry | None = None,
+        tracer: Tracer | None = None,
     ) -> None:
         self.settings = settings
         self.providers = providers or build_provider_registry(settings)
         self.tools = tools or ToolRegistry()
+        self.tracer = tracer or trace.get_tracer(__name__)
 
     async def execute(
+        self,
+        session: AsyncSession,
+        run: WorkflowRun,
+        definition: WorkflowDefinition,
+        *,
+        lease_owner: str | None = None,
+    ) -> WorkflowRun:
+        attributes = {
+            "agent_runtime.run.id": run.id,
+            "agent_runtime.workflow.id": run.workflow_id,
+            "agent_runtime.run.mode": "worker" if lease_owner is not None else "synchronous",
+        }
+        with self.tracer.start_as_current_span(
+            "workflow.run",
+            attributes=attributes,
+            record_exception=False,
+            set_status_on_exception=False,
+        ) as span:
+            try:
+                result = await self._execute_workflow(
+                    session,
+                    run,
+                    definition,
+                    lease_owner=lease_owner,
+                )
+            except Exception as exc:
+                span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+                raise
+            span.set_attribute("agent_runtime.run.status", result.status.value)
+            if result.status == RunStatus.failed:
+                span.set_status(Status(StatusCode.ERROR))
+            return result
+
+    async def _execute_workflow(
         self,
         session: AsyncSession,
         run: WorkflowRun,
@@ -177,6 +215,48 @@ class WorkflowEngine:
         return run
 
     async def _execute_step(
+        self,
+        session: AsyncSession,
+        run: WorkflowRun,
+        step: WorkflowStep,
+        step_run: StepRun,
+        outputs: dict[str, Any],
+        lease_owner: str | None,
+        deadline: float | None,
+    ) -> Any:
+        attributes = {
+            "agent_runtime.run.id": run.id,
+            "agent_runtime.step.key": step.key,
+            "agent_runtime.step.type": step.type,
+        }
+        with self.tracer.start_as_current_span(
+            "workflow.step",
+            attributes=attributes,
+            record_exception=False,
+            set_status_on_exception=False,
+        ) as span:
+            try:
+                output = await self._execute_step_inner(
+                    session,
+                    run,
+                    step,
+                    step_run,
+                    outputs,
+                    lease_owner,
+                    deadline,
+                )
+            except Exception as exc:
+                span.set_attribute("agent_runtime.step.attempts", step_run.attempts)
+                span.set_attribute("agent_runtime.step.status", step_run.status.value)
+                span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+                raise
+            span.set_attribute("agent_runtime.step.attempts", step_run.attempts)
+            span.set_attribute("agent_runtime.step.status", step_run.status.value)
+            if step_run.provider is not None:
+                span.set_attribute("agent_runtime.step.provider", step_run.provider)
+            return output
+
+    async def _execute_step_inner(
         self,
         session: AsyncSession,
         run: WorkflowRun,

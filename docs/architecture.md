@@ -44,6 +44,13 @@ An ASGI middleware records Prometheus request counts, duration, and current conc
 the matched route template rather than the request path, so workflow and run IDs cannot create an
 unbounded time-series set. The scrape endpoint is excluded from its own metrics.
 
+When `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is set, FastAPI instrumentation creates HTTP server spans
+and exports them in batches over OTLP/HTTP. Synchronous `workflow.run` spans inherit that request
+context; worker runs start a new root trace. Every `workflow.step` span is a child of its run span.
+The engine adds identifiers, execution mode, status, step type, attempt count, and selected provider,
+but never adds inputs, prompts, outputs, credentials, or error messages. With no endpoint, the
+runtime does not install a tracer provider, exporter, or background processor.
+
 ### Domain and persistence
 
 `Workflow` stores the immutable definition used for new runs. `WorkflowRun` stores lifecycle state and final output. `StepRun` is both the audit trail and the unit of observability, including attempt count, latency, tokens, cost, and error.

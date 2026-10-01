@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     worker_lease_seconds: int = Field(default=60, ge=5, le=3600)
     worker_heartbeat_seconds: float = Field(default=15.0, gt=0, le=300)
     worker_recovery_batch_size: int = Field(default=100, ge=1, le=1000)
+    otel_exporter_otlp_traces_endpoint: str | None = Field(default=None, min_length=1)
+    otel_service_name: str = Field(default="agent-runtime", min_length=1, max_length=255)
     openai_api_key: SecretStr | None = None
     openai_model: str = Field(default="gpt-5-mini", min_length=1, max_length=120)
     openai_base_url: str = Field(default="https://api.openai.com/v1", min_length=1)
