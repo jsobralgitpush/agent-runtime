@@ -34,6 +34,19 @@ class WorkflowTimeBudgetExceededError(TimeoutError):
     pass
 
 
+class WorkflowTokenBudgetExceededError(RuntimeError):
+    pass
+
+
+def token_budget_exceeded(
+    consumed_tokens: int, max_total_tokens: int
+) -> WorkflowTokenBudgetExceededError:
+    return WorkflowTokenBudgetExceededError(
+        f"Workflow token budget of {max_total_tokens} exhausted after "
+        f"consuming {consumed_tokens} tokens"
+    )
+
+
 def remaining_time_budget(deadline: float | None) -> float | None:
     if deadline is None:
         return None
@@ -158,6 +171,7 @@ class WorkflowEngine:
         lease_owner: str | None = None,
     ) -> WorkflowRun:
         outputs: dict[str, Any] = {}
+        consumed_tokens = 0
         lease_lost = False
         run.status = RunStatus.running
         run.started_at = datetime.now(UTC)
@@ -174,6 +188,15 @@ class WorkflowEngine:
         try:
             for position, step in enumerate(definition.steps):
                 remaining_time_budget(deadline)
+                if (
+                    step.type == "llm"
+                    and definition.max_total_tokens is not None
+                    and consumed_tokens >= definition.max_total_tokens
+                ):
+                    raise token_budget_exceeded(
+                        consumed_tokens,
+                        definition.max_total_tokens,
+                    )
                 step_run = StepRun(
                     run_id=run.id,
                     step_key=step.key,
@@ -192,6 +215,15 @@ class WorkflowEngine:
                     lease_owner,
                     deadline,
                 )
+                consumed_tokens += (step_run.prompt_tokens or 0) + (step_run.completion_tokens or 0)
+                if (
+                    definition.max_total_tokens is not None
+                    and consumed_tokens > definition.max_total_tokens
+                ):
+                    raise token_budget_exceeded(
+                        consumed_tokens,
+                        definition.max_total_tokens,
+                    )
                 outputs[step.key] = output
             run.status = RunStatus.completed
             run.output = outputs[definition.steps[-1].key]
