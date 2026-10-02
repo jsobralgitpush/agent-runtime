@@ -13,7 +13,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Ordered LLM provider fallback with selected-provider telemetry
 - Deterministic local execution without API credentials
 - Exponential retry backoff and per-step timeouts
-- Optional workflow-wide execution time budgets
+- Optional workflow-wide execution time and token budgets
 - Idempotent run creation under concurrent requests
 - Optional deferred execution through database workers with renewable leases
 - Conservative recovery of expired worker leases without automatic side-effect replay
@@ -92,7 +92,7 @@ curl -X POST http://localhost:8000/v1/workflows \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "Reliable writer",
-    "definition": {"max_runtime_seconds": 60, "steps": [
+    "definition": {"max_runtime_seconds": 60, "max_total_tokens": 5000, "steps": [
       {"key": "draft", "type": "llm", "provider": "fake", "input": "Explain ${input.topic}"},
       {"key": "publish", "type": "tool", "tool": "uppercase", "input": "${steps.draft.output}"}
     ]}
@@ -127,6 +127,11 @@ Set `max_runtime_seconds` on a workflow definition to bound elapsed engine time 
 retry backoffs. This budget applies in both synchronous and worker execution; per-step
 `timeout_seconds` continues to bound each individual attempt. Provider/tool calls are cancelled at
 the deadline, while an active database transaction is allowed to reach a safe boundary.
+
+Set `max_total_tokens` to bound the cumulative prompt and completion tokens reported by successful
+LLM calls. Once the exact limit is consumed, tool steps may still run but another LLM call will not
+start. Because usage is known only after a response, one call can exceed the remaining budget; that
+completed step and its usage remain inspectable while the run fails before executing later steps.
 
 ## Quality checks
 
@@ -164,7 +169,7 @@ environment and is never stored in a workflow or run. Set `ANTHROPIC_API_KEY` to
 - v0.2: database-backed workers, leases, heartbeats, and terminal expired-run recovery; resumable recovery next
 - v0.3: provider fallback plus OpenAI and Anthropic adapters delivered; encrypted credentials next
 - v0.4: DAG execution, parallel branches, and human approval steps
-- v0.5: Prometheus HTTP metrics, workflow time budgets, and OpenTelemetry traces delivered; evaluation datasets and token/cost budgets next
+- v0.5: Prometheus HTTP metrics, workflow time/token budgets, and OpenTelemetry traces delivered; evaluation datasets and cost budgets next
 
 ## License
 

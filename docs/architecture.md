@@ -87,6 +87,7 @@ This intentionally avoids an embedded expression language in v0.1. Expression en
 
 - Provider and tool calls have bounded timeouts.
 - A workflow may define a cumulative wall-clock budget across calls and retry backoffs.
+- A workflow may bound cumulative tokens reported by successful LLM calls.
 - A retry policy controls maximum attempts and exponential backoff.
 - A failed step fails the run and prevents later steps from executing.
 - Completed prior steps are retained for diagnosis.
@@ -97,6 +98,12 @@ attempt. Exhausting the workflow budget cancels the active call, marks that step
 with `WorkflowTimeBudgetExceededError`, and prevents later steps from starting. The engine checks the
 deadline at safe boundaries; it allows an active database transaction to finish, and that elapsed
 time reduces the budget available to the next call.
+
+The token budget sums prompt and completion usage after each successful LLM response. Reaching the
+limit prevents another LLM call but does not block tool-only work. A response can exceed the
+remaining budget because usage is not known in advance; in that case the completed step and its
+usage are retained, the run fails with `WorkflowTokenBudgetExceededError`, and later steps do not
+start. Provider failures that do not return normalized usage cannot be charged.
 
 ## Data model
 

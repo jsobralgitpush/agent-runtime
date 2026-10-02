@@ -11,6 +11,7 @@ from app.engine import (
     AllProvidersFailedError,
     WorkflowEngine,
     WorkflowTimeBudgetExceededError,
+    WorkflowTokenBudgetExceededError,
     resolve_references,
 )
 from app.models import RunStatus, Workflow, WorkflowRun
@@ -184,6 +185,96 @@ async def test_workflow_time_budget_includes_retry_backoff() -> None:
     assert WorkflowTimeBudgetExceededError.__name__ in (result.steps[0].error or "")
     assert result.steps[0].attempts == 1
     assert attempts == 1
+
+
+async def test_workflow_token_budget_stops_before_another_llm_call() -> None:
+    calls = 0
+
+    class MeteredProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            nonlocal calls
+            calls += 1
+            return LLMResult(
+                output=f"generated: {prompt}",
+                prompt_tokens=2,
+                completion_tokens=3,
+                estimated_cost_usd=None,
+            )
+
+    providers = ProviderRegistry()
+    providers.register("metered", MeteredProvider())
+    definition = WorkflowDefinition.model_validate(
+        {
+            "max_total_tokens": 5,
+            "steps": [
+                {"key": "first", "type": "llm", "provider": "metered", "input": "one"},
+                {
+                    "key": "transform",
+                    "type": "tool",
+                    "tool": "uppercase",
+                    "input": "${steps.first.output}",
+                },
+                {"key": "second", "type": "llm", "provider": "metered", "input": "two"},
+            ],
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Token budget", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), providers=providers).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.failed
+    assert WorkflowTokenBudgetExceededError.__name__ in (result.error or "")
+    assert calls == 1
+    assert len(result.steps) == 2
+    assert result.steps[0].status == RunStatus.completed
+    assert result.steps[0].prompt_tokens == 2
+    assert result.steps[0].completion_tokens == 3
+    assert result.steps[1].status == RunStatus.completed
+    assert result.steps[1].step_type == "tool"
+
+
+async def test_workflow_token_budget_records_a_single_call_overshoot() -> None:
+    class MeteredProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            return LLMResult(
+                output="larger than predicted",
+                prompt_tokens=3,
+                completion_tokens=4,
+                estimated_cost_usd=None,
+            )
+
+    providers = ProviderRegistry()
+    providers.register("metered", MeteredProvider())
+    definition = WorkflowDefinition.model_validate(
+        {
+            "max_total_tokens": 5,
+            "steps": [{"key": "generate", "type": "llm", "provider": "metered", "input": "one"}],
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Token overshoot", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), providers=providers).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.failed
+    assert "budget of 5 exhausted after consuming 7 tokens" in (result.error or "")
+    assert result.steps[0].status == RunStatus.completed
+    assert result.steps[0].output == "larger than predicted"
 
 
 async def test_llm_step_falls_back_and_records_selected_provider() -> None:
