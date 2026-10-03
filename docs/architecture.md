@@ -59,6 +59,15 @@ runtime does not install a tracer provider, exporter, or background processor.
 
 `WorkflowEngine` is an application service rather than a web concern. It accepts a database session, run, and validated definition, so it can later be invoked by a queue worker without changing the workflow semantics.
 
+### Evaluation runner
+
+`agent-evaluate` loads version-controlled JSONL cases and submits each case to the existing
+synchronous run endpoint. It compares the final output with `expected_output` using exact JSON
+equality and emits a machine-readable summary with a CI-compatible exit status. Evaluation does not
+have a privileged execution path: each case creates the same durable run history, telemetry,
+budgets, and provider calls as any other API request. Cases execute sequentially to keep ordering and
+resource use predictable.
+
 ### Providers and tools
 
 The provider boundary returns a normalized `LLMResult`, preventing provider response shapes from leaking into the engine. The tool boundary is intentionally narrow: an async callable from JSON-compatible input to output. Registries use explicit allowlists, so workflow definitions cannot import arbitrary Python code.

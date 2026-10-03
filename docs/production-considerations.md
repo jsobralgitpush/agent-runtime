@@ -11,6 +11,7 @@ v0.1 demonstrates production concerns but is not presented as a finished multi-t
 - Each execution boundary records status, attempts, latency, output, usage, cost, and errors.
 - `/v1/metrics` exposes low-cardinality HTTP request, error, latency, and concurrency metrics.
 - Optional OTLP/HTTP tracing correlates API requests with workflow and step execution.
+- JSONL evaluation datasets can exercise persisted workflows with exact expected outputs.
 - The container uses a non-root user.
 - CI has read-only repository permissions and a frozen dependency installation.
 - The fake provider enables deterministic tests without sending data externally.
@@ -54,6 +55,15 @@ counts, stuck-run alerts, cost budgets, and provider error classification. Token
 usage returned by successful provider calls and may overshoot by one response; they are a workflow
 guardrail, not a billing quota. The time budget bounds engine work at safe execution boundaries but
 is not a tenant quota or substitute for worker isolation.
+
+### Evaluation data
+
+The evaluation runner sends every case through the synchronous API and includes expected and actual
+outputs in its JSON report. Treat datasets and reports according to the same data classification and
+retention policy as workflow inputs and outputs; do not commit production personal data. Repeated
+evaluations create new durable runs and can incur provider usage. The current exact-match scorer is
+appropriate for deterministic workflows; semantic, rubric, and model-based graders require a
+separate trust and cost policy.
 
 ### Provider reliability
 

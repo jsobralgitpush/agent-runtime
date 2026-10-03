@@ -1,0 +1,2 @@
+{"id":"uppercase-hello","inputs":{"text":"hello"},"expected_output":"HELLO"}
+{"id":"uppercase-runtime","inputs":{"text":"agent runtime"},"expected_output":"AGENT RUNTIME"}
