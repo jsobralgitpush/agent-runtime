@@ -1,0 +1,13 @@
+{
+  "name": "Uppercase evaluator",
+  "definition": {
+    "steps": [
+      {
+        "key": "uppercase",
+        "type": "tool",
+        "tool": "uppercase",
+        "input": "${input.text}"
+      }
+    ]
+  }
+}

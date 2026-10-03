@@ -20,6 +20,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Latency, token, cost, input, output, and error recording per step
 - Prometheus HTTP request rate, error, latency, and in-progress metrics
 - Optional OpenTelemetry HTTP, workflow, and step traces exported over OTLP/HTTP
+- Version-controlled JSONL evaluation datasets with a CI-friendly runner
 - JSON structured logging, Docker Compose, tests, type checking, linting, and CI
 
 ## Architecture
@@ -133,6 +134,31 @@ LLM calls. Once the exact limit is consumed, tool steps may still run but anothe
 start. Because usage is known only after a response, one call can exceed the remaining budget; that
 completed step and its usage remain inspectable while the run fails before executing later steps.
 
+## Evaluation datasets
+
+Store deterministic cases as JSON Lines, one case per line. Each case needs a unique `id`, workflow
+`inputs`, and an `expected_output` JSON value:
+
+```json
+{"id":"uppercase-hello","inputs":{"text":"hello"},"expected_output":"HELLO"}
+{"id":"uppercase-runtime","inputs":{"text":"agent runtime"},"expected_output":"AGENT RUNTIME"}
+```
+
+Run the dataset against a persisted workflow whose final output matches those expectations:
+
+```bash
+curl -X POST http://localhost:8000/v1/workflows \
+  -H 'Content-Type: application/json' \
+  --data @examples/uppercase-workflow.json
+uv run agent-evaluate <workflow-id> examples/uppercase-evaluation.jsonl
+```
+
+Use `--api-url` for a non-local runtime and `--timeout-seconds` for longer synchronous runs. The
+command prints a JSON summary containing each run ID plus expected and actual outputs. It exits `0`
+when every case passes, `1` for expectation failures, and `2` for dataset, HTTP, or configuration
+errors. Cases run sequentially and create normal persisted runs; datasets are limited to 1,000 cases.
+Comparison is exact JSON equality, without model-based or fuzzy scoring.
+
 ## Quality checks
 
 ```bash
@@ -169,7 +195,7 @@ environment and is never stored in a workflow or run. Set `ANTHROPIC_API_KEY` to
 - v0.2: database-backed workers, leases, heartbeats, and terminal expired-run recovery; resumable recovery next
 - v0.3: provider fallback plus OpenAI and Anthropic adapters delivered; encrypted credentials next
 - v0.4: DAG execution, parallel branches, and human approval steps
-- v0.5: Prometheus HTTP metrics, workflow time/token budgets, and OpenTelemetry traces delivered; evaluation datasets and cost budgets next
+- v0.5: Prometheus HTTP metrics, workflow time/token budgets, OpenTelemetry traces, and a JSONL evaluation runner delivered; cost budgets next
 
 ## License
 

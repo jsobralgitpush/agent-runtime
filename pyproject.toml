@@ -14,7 +14,7 @@ dependencies = [
   "alembic>=1.13,<2",
   "asyncpg>=0.29,<1",
   "fastapi>=0.115,<1",
-  "httpx>=0.27,<1",
+  "httpx[socks]>=0.27,<1",
   "opentelemetry-exporter-otlp-proto-http>=1.30,<2",
   "opentelemetry-instrumentation-fastapi>=0.51b0,<1",
   "opentelemetry-sdk>=1.30,<2",
@@ -26,6 +26,7 @@ dependencies = [
 ]
 
 [project.scripts]
+agent-evaluate = "app.evaluation:main"
 agent-worker = "app.worker:main"
 
 [project.optional-dependencies]
