@@ -13,7 +13,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Ordered LLM provider fallback with selected-provider telemetry
 - Deterministic local execution without API credentials
 - Exponential retry backoff and per-step timeouts
-- Optional workflow-wide execution time and token budgets
+- Optional workflow-wide execution time, token, and estimated cost budgets
 - Idempotent run creation under concurrent requests
 - Optional deferred execution through database workers with renewable leases
 - Conservative recovery of expired worker leases without automatic side-effect replay
@@ -93,7 +93,7 @@ curl -X POST http://localhost:8000/v1/workflows \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "Reliable writer",
-    "definition": {"max_runtime_seconds": 60, "max_total_tokens": 5000, "steps": [
+    "definition": {"max_runtime_seconds": 60, "max_total_tokens": 5000, "max_estimated_cost_usd": 1, "steps": [
       {"key": "draft", "type": "llm", "provider": "fake", "input": "Explain ${input.topic}"},
       {"key": "publish", "type": "tool", "tool": "uppercase", "input": "${steps.draft.output}"}
     ]}
@@ -133,6 +133,14 @@ Set `max_total_tokens` to bound the cumulative prompt and completion tokens repo
 LLM calls. Once the exact limit is consumed, tool steps may still run but another LLM call will not
 start. Because usage is known only after a response, one call can exceed the remaining budget; that
 completed step and its usage remain inspectable while the run fails before executing later steps.
+
+Set `max_estimated_cost_usd` to apply the same cumulative guardrail to normalized provider cost.
+Hosted-provider pricing changes independently of this runtime, so configure both current input and
+output rates per million tokens with the corresponding `OPENAI_*_COST_PER_MILLION_TOKENS_USD` or
+`ANTHROPIC_*_COST_PER_MILLION_TOKENS_USD` environment variables. The runtime never ships a stale
+price catalog. A workflow with a cost budget fails closed after a successful LLM call whose provider
+cannot report a cost. As with tokens, actual usage is known only after the response, so one call may
+exceed the remaining budget and remains recorded for inspection.
 
 ## Evaluation datasets
 
@@ -176,7 +184,8 @@ on the step run. Tools are async callables registered in `ToolRegistry`. The run
 `openai` provider; `OPENAI_MODEL` defaults to `gpt-5-mini`. The key is read from the process
 environment and is never stored in a workflow or run. Set `ANTHROPIC_API_KEY` to register the
 `anthropic` provider; `ANTHROPIC_MODEL` defaults to `claude-sonnet-5` and
-`ANTHROPIC_MAX_TOKENS` defaults to `4096`.
+`ANTHROPIC_MAX_TOKENS` defaults to `4096`. To record cost estimates, configure both input and output
+per-million-token rates for that provider; partial rate configuration is rejected at startup.
 
 ## API endpoints
 
@@ -195,7 +204,7 @@ environment and is never stored in a workflow or run. Set `ANTHROPIC_API_KEY` to
 - v0.2: database-backed workers, leases, heartbeats, and terminal expired-run recovery; resumable recovery next
 - v0.3: provider fallback plus OpenAI and Anthropic adapters delivered; encrypted credentials next
 - v0.4: DAG execution, parallel branches, and human approval steps
-- v0.5: Prometheus HTTP metrics, workflow time/token budgets, OpenTelemetry traces, and a JSONL evaluation runner delivered; cost budgets next
+- v0.5: Prometheus HTTP metrics, workflow time/token/cost budgets, OpenTelemetry traces, and a JSONL evaluation runner delivered
 
 ## License
 

@@ -115,6 +115,8 @@ async def test_openai_provider_uses_responses_api_and_normalizes_result() -> Non
             api_key="test-secret",
             model="test-model",
             base_url="https://api.openai.test/v1/",
+            input_cost_per_million_tokens_usd=2,
+            output_cost_per_million_tokens_usd=4,
             client=client,
         )
         result = await provider.complete(
@@ -124,7 +126,7 @@ async def test_openai_provider_uses_responses_api_and_normalizes_result() -> Non
     assert result.output == "Hello back"
     assert result.prompt_tokens == 3
     assert result.completion_tokens == 2
-    assert result.estimated_cost_usd is None
+    assert result.estimated_cost_usd == pytest.approx(0.000014)
 
 
 async def test_openai_provider_rejects_response_without_text() -> None:
@@ -149,6 +151,21 @@ def test_openai_provider_is_registered_only_when_configured() -> None:
         Settings(app_env="test", openai_api_key="test-secret", openai_model="test-model")
     )
     assert isinstance(configured.get("openai"), OpenAIProvider)
+
+
+def test_provider_cost_rates_must_be_configured_as_a_pair() -> None:
+    with pytest.raises(ValueError, match="configured together"):
+        Settings(
+            app_env="test",
+            openai_input_cost_per_million_tokens_usd=1,
+        )
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        OpenAIProvider(
+            api_key="secret",
+            model="model",
+            input_cost_per_million_tokens_usd=-1,
+            output_cost_per_million_tokens_usd=1,
+        )
 
 
 async def test_anthropic_provider_uses_messages_api_and_normalizes_result() -> None:
@@ -178,6 +195,8 @@ async def test_anthropic_provider_uses_messages_api_and_normalizes_result() -> N
             model="test-model",
             max_tokens=512,
             base_url="https://api.anthropic.test/v1/",
+            input_cost_per_million_tokens_usd=3,
+            output_cost_per_million_tokens_usd=15,
             client=client,
         )
         result = await provider.complete("Hello", metadata={"run_id": "run-1"})
@@ -185,7 +204,7 @@ async def test_anthropic_provider_uses_messages_api_and_normalizes_result() -> N
     assert result.output == "Hello from Claude"
     assert result.prompt_tokens == 4
     assert result.completion_tokens == 3
-    assert result.estimated_cost_usd is None
+    assert result.estimated_cost_usd == pytest.approx(0.000057)
 
 
 async def test_anthropic_provider_rejects_response_without_text() -> None:

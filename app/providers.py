@@ -1,5 +1,7 @@
 import hashlib
 from dataclasses import dataclass
+from decimal import Decimal
+from math import isfinite
 from typing import Any, Protocol
 
 import httpx
@@ -19,6 +21,37 @@ class LLMResult:
 
 class LLMProvider(Protocol):
     async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult: ...
+
+
+def _validate_cost_rates(
+    input_rate: float | None, output_rate: float | None
+) -> tuple[float | None, float | None]:
+    if (input_rate is None) != (output_rate is None):
+        raise ValueError("Input and output cost rates must be configured together")
+    if input_rate is not None and (
+        input_rate < 0
+        or output_rate is None
+        or output_rate < 0
+        or not isfinite(input_rate)
+        or not isfinite(output_rate)
+    ):
+        raise ValueError("Cost rates must be finite and non-negative")
+    return input_rate, output_rate
+
+
+def _estimate_cost_usd(
+    prompt_tokens: int,
+    completion_tokens: int,
+    input_rate: float | None,
+    output_rate: float | None,
+) -> float | None:
+    if input_rate is None or output_rate is None:
+        return None
+    cost = (
+        Decimal(prompt_tokens) * Decimal(str(input_rate))
+        + Decimal(completion_tokens) * Decimal(str(output_rate))
+    ) / Decimal(1_000_000)
+    return float(cost)
 
 
 class FakeLLMProvider:
@@ -65,6 +98,8 @@ class OpenAIProvider:
         api_key: str,
         model: str,
         base_url: str = "https://api.openai.com/v1",
+        input_cost_per_million_tokens_usd: float | None = None,
+        output_cost_per_million_tokens_usd: float | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         if not api_key or not model:
@@ -72,6 +107,9 @@ class OpenAIProvider:
         self._api_key = api_key
         self._model = model
         self._url = f"{base_url.rstrip('/')}/responses"
+        self._input_cost_rate, self._output_cost_rate = _validate_cost_rates(
+            input_cost_per_million_tokens_usd, output_cost_per_million_tokens_usd
+        )
         self._client = client
 
     async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
@@ -107,7 +145,12 @@ class OpenAIProvider:
             output=output,
             prompt_tokens=parsed.usage.input_tokens,
             completion_tokens=parsed.usage.output_tokens,
-            estimated_cost_usd=None,
+            estimated_cost_usd=_estimate_cost_usd(
+                parsed.usage.input_tokens,
+                parsed.usage.output_tokens,
+                self._input_cost_rate,
+                self._output_cost_rate,
+            ),
         )
 
 
@@ -136,6 +179,8 @@ class AnthropicProvider:
         model: str,
         max_tokens: int,
         base_url: str = "https://api.anthropic.com/v1",
+        input_cost_per_million_tokens_usd: float | None = None,
+        output_cost_per_million_tokens_usd: float | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         if not api_key or not model:
@@ -146,6 +191,9 @@ class AnthropicProvider:
         self._model = model
         self._max_tokens = max_tokens
         self._url = f"{base_url.rstrip('/')}/messages"
+        self._input_cost_rate, self._output_cost_rate = _validate_cost_rates(
+            input_cost_per_million_tokens_usd, output_cost_per_million_tokens_usd
+        )
         self._client = client
 
     async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
@@ -176,7 +224,12 @@ class AnthropicProvider:
             output=output,
             prompt_tokens=parsed.usage.input_tokens,
             completion_tokens=parsed.usage.output_tokens,
-            estimated_cost_usd=None,
+            estimated_cost_usd=_estimate_cost_usd(
+                parsed.usage.input_tokens,
+                parsed.usage.output_tokens,
+                self._input_cost_rate,
+                self._output_cost_rate,
+            ),
         )
 
 
@@ -208,6 +261,12 @@ def build_provider_registry(settings: Settings) -> ProviderRegistry:
                 api_key=api_key,
                 model=settings.openai_model,
                 base_url=settings.openai_base_url,
+                input_cost_per_million_tokens_usd=(
+                    settings.openai_input_cost_per_million_tokens_usd
+                ),
+                output_cost_per_million_tokens_usd=(
+                    settings.openai_output_cost_per_million_tokens_usd
+                ),
             ),
         )
     anthropic_api_key = (
@@ -223,6 +282,12 @@ def build_provider_registry(settings: Settings) -> ProviderRegistry:
                 model=settings.anthropic_model,
                 max_tokens=settings.anthropic_max_tokens,
                 base_url=settings.anthropic_base_url,
+                input_cost_per_million_tokens_usd=(
+                    settings.anthropic_input_cost_per_million_tokens_usd
+                ),
+                output_cost_per_million_tokens_usd=(
+                    settings.anthropic_output_cost_per_million_tokens_usd
+                ),
             ),
         )
     return registry
