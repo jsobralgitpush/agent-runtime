@@ -82,6 +82,11 @@ the Responses API with storage disabled, passes run and step IDs as metadata, an
 token usage into the same `LLMResult` used by the fake provider. Credentials remain process-level
 configuration and are not part of persisted workflow definitions.
 
+OpenAI and Anthropic cost estimates use operator-supplied input and output rates per million tokens.
+The rates are paired process configuration rather than persisted workflow data or a hardcoded price
+catalog. This keeps model selection and pricing policy with the deployer while preserving a common
+`estimated_cost_usd` field for engine enforcement and telemetry.
+
 The `anthropic` adapter is registered under the same rule when `ANTHROPIC_API_KEY` is present. It
 calls the Messages API with a bounded output-token budget and normalizes text blocks and token usage.
 Non-text blocks such as model thinking remain outside the runtime's provider-neutral result shape.
@@ -97,6 +102,7 @@ This intentionally avoids an embedded expression language in v0.1. Expression en
 - Provider and tool calls have bounded timeouts.
 - A workflow may define a cumulative wall-clock budget across calls and retry backoffs.
 - A workflow may bound cumulative tokens reported by successful LLM calls.
+- A workflow may bound cumulative estimated cost reported by successful LLM calls.
 - A retry policy controls maximum attempts and exponential backoff.
 - A failed step fails the run and prevents later steps from executing.
 - Completed prior steps are retained for diagnosis.
@@ -113,6 +119,13 @@ limit prevents another LLM call but does not block tool-only work. A response ca
 remaining budget because usage is not known in advance; in that case the completed step and its
 usage are retained, the run fails with `WorkflowTokenBudgetExceededError`, and later steps do not
 start. Provider failures that do not return normalized usage cannot be charged.
+
+The cost budget mirrors those boundaries using each successful step's normalized
+`estimated_cost_usd`. Reaching the exact limit permits tool steps but prevents another LLM call; a
+single response may overshoot and remains recorded before the run fails with
+`WorkflowCostBudgetExceededError`. If a cost-budgeted workflow receives a successful response with
+no cost estimate, it fails closed with `WorkflowCostUnavailableError`. This prevents silently
+bypassing the guardrail when a custom, fallback, or unpriced provider is selected.
 
 ## Data model
 

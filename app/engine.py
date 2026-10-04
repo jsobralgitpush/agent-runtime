@@ -5,6 +5,7 @@ import re
 import time
 from dataclasses import replace
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from opentelemetry import trace
@@ -38,12 +39,33 @@ class WorkflowTokenBudgetExceededError(RuntimeError):
     pass
 
 
+class WorkflowCostBudgetExceededError(RuntimeError):
+    pass
+
+
+class WorkflowCostUnavailableError(RuntimeError):
+    pass
+
+
 def token_budget_exceeded(
     consumed_tokens: int, max_total_tokens: int
 ) -> WorkflowTokenBudgetExceededError:
     return WorkflowTokenBudgetExceededError(
         f"Workflow token budget of {max_total_tokens} exhausted after "
         f"consuming {consumed_tokens} tokens"
+    )
+
+
+def _format_usd(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+def cost_budget_exceeded(
+    consumed_cost_usd: Decimal, max_cost_usd: Decimal
+) -> WorkflowCostBudgetExceededError:
+    return WorkflowCostBudgetExceededError(
+        f"Workflow cost budget of ${_format_usd(max_cost_usd)} exhausted after "
+        f"an estimated ${_format_usd(consumed_cost_usd)}"
     )
 
 
@@ -172,6 +194,12 @@ class WorkflowEngine:
     ) -> WorkflowRun:
         outputs: dict[str, Any] = {}
         consumed_tokens = 0
+        consumed_cost_usd = Decimal(0)
+        max_cost_usd = (
+            Decimal(str(definition.max_estimated_cost_usd))
+            if definition.max_estimated_cost_usd is not None
+            else None
+        )
         lease_lost = False
         run.status = RunStatus.running
         run.started_at = datetime.now(UTC)
@@ -197,6 +225,12 @@ class WorkflowEngine:
                         consumed_tokens,
                         definition.max_total_tokens,
                     )
+                if (
+                    step.type == "llm"
+                    and max_cost_usd is not None
+                    and consumed_cost_usd >= max_cost_usd
+                ):
+                    raise cost_budget_exceeded(consumed_cost_usd, max_cost_usd)
                 step_run = StepRun(
                     run_id=run.id,
                     step_key=step.key,
@@ -216,6 +250,14 @@ class WorkflowEngine:
                     deadline,
                 )
                 consumed_tokens += (step_run.prompt_tokens or 0) + (step_run.completion_tokens or 0)
+                if step.type == "llm" and max_cost_usd is not None:
+                    if step_run.estimated_cost_usd is None:
+                        raise WorkflowCostUnavailableError(
+                            "Cannot enforce workflow cost budget because provider "
+                            f"{step_run.provider!r} did not report an estimated cost for step "
+                            f"{step.key!r}"
+                        )
+                    consumed_cost_usd += Decimal(str(step_run.estimated_cost_usd))
                 if (
                     definition.max_total_tokens is not None
                     and consumed_tokens > definition.max_total_tokens
@@ -224,6 +266,8 @@ class WorkflowEngine:
                         consumed_tokens,
                         definition.max_total_tokens,
                     )
+                if max_cost_usd is not None and consumed_cost_usd > max_cost_usd:
+                    raise cost_budget_exceeded(consumed_cost_usd, max_cost_usd)
                 outputs[step.key] = output
             run.status = RunStatus.completed
             run.output = outputs[definition.steps[-1].key]

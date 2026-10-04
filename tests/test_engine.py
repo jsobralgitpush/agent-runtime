@@ -9,6 +9,8 @@ from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from app.config import Settings
 from app.engine import (
     AllProvidersFailedError,
+    WorkflowCostBudgetExceededError,
+    WorkflowCostUnavailableError,
     WorkflowEngine,
     WorkflowTimeBudgetExceededError,
     WorkflowTokenBudgetExceededError,
@@ -275,6 +277,133 @@ async def test_workflow_token_budget_records_a_single_call_overshoot() -> None:
     assert "budget of 5 exhausted after consuming 7 tokens" in (result.error or "")
     assert result.steps[0].status == RunStatus.completed
     assert result.steps[0].output == "larger than predicted"
+
+
+async def test_workflow_cost_budget_stops_before_another_llm_call() -> None:
+    calls = 0
+
+    class MeteredProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            nonlocal calls
+            calls += 1
+            return LLMResult(
+                output=f"generated: {prompt}",
+                prompt_tokens=2,
+                completion_tokens=3,
+                estimated_cost_usd=0.05,
+            )
+
+    providers = ProviderRegistry()
+    providers.register("metered", MeteredProvider())
+    definition = WorkflowDefinition.model_validate(
+        {
+            "max_estimated_cost_usd": 0.05,
+            "steps": [
+                {"key": "first", "type": "llm", "provider": "metered", "input": "one"},
+                {
+                    "key": "transform",
+                    "type": "tool",
+                    "tool": "uppercase",
+                    "input": "${steps.first.output}",
+                },
+                {"key": "second", "type": "llm", "provider": "metered", "input": "two"},
+            ],
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Cost budget", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), providers=providers).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.failed
+    assert WorkflowCostBudgetExceededError.__name__ in (result.error or "")
+    assert "budget of $0.05 exhausted after an estimated $0.05" in (result.error or "")
+    assert calls == 1
+    assert len(result.steps) == 2
+    assert result.steps[0].status == RunStatus.completed
+    assert result.steps[0].estimated_cost_usd == 0.05
+    assert result.steps[1].status == RunStatus.completed
+    assert result.steps[1].step_type == "tool"
+
+
+async def test_workflow_cost_budget_records_a_single_call_overshoot() -> None:
+    class MeteredProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            return LLMResult(
+                output="costly response",
+                prompt_tokens=3,
+                completion_tokens=4,
+                estimated_cost_usd=0.06,
+            )
+
+    providers = ProviderRegistry()
+    providers.register("metered", MeteredProvider())
+    definition = WorkflowDefinition.model_validate(
+        {
+            "max_estimated_cost_usd": 0.05,
+            "steps": [{"key": "generate", "type": "llm", "provider": "metered"}],
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Cost overshoot", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), providers=providers).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.failed
+    assert "budget of $0.05 exhausted after an estimated $0.06" in (result.error or "")
+    assert result.steps[0].status == RunStatus.completed
+    assert result.steps[0].output == "costly response"
+
+
+async def test_workflow_cost_budget_fails_closed_when_cost_is_unknown() -> None:
+    class UnpricedProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            return LLMResult(
+                output="unpriced response",
+                prompt_tokens=1,
+                completion_tokens=1,
+                estimated_cost_usd=None,
+            )
+
+    providers = ProviderRegistry()
+    providers.register("unpriced", UnpricedProvider())
+    definition = WorkflowDefinition.model_validate(
+        {
+            "max_estimated_cost_usd": 1,
+            "steps": [{"key": "generate", "type": "llm", "provider": "unpriced"}],
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Unknown cost", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), providers=providers).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.failed
+    assert WorkflowCostUnavailableError.__name__ in (result.error or "")
+    assert "provider 'unpriced'" in (result.error or "")
+    assert result.steps[0].status == RunStatus.completed
+    assert result.steps[0].estimated_cost_usd is None
 
 
 async def test_llm_step_falls_back_and_records_selected_provider() -> None:

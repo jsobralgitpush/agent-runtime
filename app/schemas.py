@@ -40,6 +40,9 @@ class WorkflowStep(BaseModel):
 class WorkflowDefinition(BaseModel):
     max_runtime_seconds: float | None = Field(default=None, gt=0, le=3600)
     max_total_tokens: int | None = Field(default=None, gt=0, le=10_000_000)
+    max_estimated_cost_usd: float | None = Field(
+        default=None, gt=0, le=1_000_000, allow_inf_nan=False
+    )
     steps: list[WorkflowStep] = Field(min_length=1, max_length=50)
 
     @model_validator(mode="after")

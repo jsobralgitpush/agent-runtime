@@ -7,7 +7,7 @@ v0.1 demonstrates production concerns but is not presented as a finished multi-t
 - Database uniqueness is the source of truth for request idempotency.
 - Provider and tool implementations are allowlisted, not dynamically imported.
 - Workflow size, identifiers, retries, and timeouts have validation bounds.
-- Workflows can bound cumulative execution time and reported LLM token usage.
+- Workflows can bound cumulative execution time, reported LLM token usage, and estimated cost.
 - Each execution boundary records status, attempts, latency, output, usage, cost, and errors.
 - `/v1/metrics` exposes low-cardinality HTTP request, error, latency, and concurrency metrics.
 - Optional OTLP/HTTP tracing correlates API requests with workflow and step execution.
@@ -51,10 +51,13 @@ OpenTelemetry HTTP, workflow, and step spans are available when an OTLP traces e
 engine excludes prompts, inputs, outputs, credentials, and exception messages by design. Protect
 collector credentials, configure sampling and retention for the deployment, and review standard
 HTTP semantic attributes against the service's data policy. Add workflow/worker metrics, retry
-counts, stuck-run alerts, cost budgets, and provider error classification. Token budgets count only
-usage returned by successful provider calls and may overshoot by one response; they are a workflow
-guardrail, not a billing quota. The time budget bounds engine work at safe execution boundaries but
-is not a tenant quota or substitute for worker isolation.
+counts, stuck-run alerts, and provider error classification. Token and cost budgets count only usage
+returned by successful provider calls and may overshoot by one response; they are workflow
+guardrails, not billing quotas. Cost rates are operator-managed configuration and must be updated
+when the selected model or provider price changes. A budget fails closed when cost is unknown, but
+it does not reconcile discounts, cached-token pricing, taxes, credits, or the provider invoice. The
+time budget bounds engine work at safe execution boundaries but is not a tenant quota or substitute
+for worker isolation.
 
 ### Evaluation data
 
