@@ -8,6 +8,7 @@ v0.1 demonstrates production concerns but is not presented as a finished multi-t
 - Provider and tool implementations are allowlisted, not dynamically imported.
 - Workflow size, identifiers, retries, and timeouts have validation bounds.
 - Workflows can bound cumulative execution time, reported LLM token usage, and estimated cost.
+- Step dependency graphs are validated and planned deterministically before execution.
 - Each execution boundary records status, attempts, latency, output, usage, cost, and errors.
 - `/v1/metrics` exposes low-cardinality HTTP request, error, latency, and concurrency metrics.
 - Optional OTLP/HTTP tracing correlates API requests with workflow and step execution.
@@ -24,6 +25,13 @@ Deferred execution uses database-backed workers with renewable leases and heartb
 are terminalized as failed without replay, preventing them from remaining ambiguously `running`.
 Before production use, add explicit retry/resume operations according to persisted step state and
 a documented at-least-once strategy, especially for side effects.
+
+### DAG concurrency
+
+Explicit step dependencies are supported, but dependency-ready branches execute sequentially. This
+keeps step persistence, retries, leases, and cumulative budgets on one transactionally simple path.
+Before enabling parallel branches, isolate database sessions per task, define cancellation behavior
+for sibling failures, synchronize token and cost accounting, and bound workflow-level concurrency.
 
 ### Side-effect idempotency
 

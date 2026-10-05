@@ -10,6 +10,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - PostgreSQL persistence with SQLAlchemy and Alembic
 - Pluggable LLM providers and tool registry
 - Optional OpenAI and Anthropic providers configured from the environment
+- Explicit step dependencies with deterministic DAG planning
 - Ordered LLM provider fallback with selected-provider telemetry
 - Deterministic local execution without API credentials
 - Exponential retry backoff and per-step timeouts
@@ -95,7 +96,7 @@ curl -X POST http://localhost:8000/v1/workflows \
     "name": "Reliable writer",
     "definition": {"max_runtime_seconds": 60, "max_total_tokens": 5000, "max_estimated_cost_usd": 1, "steps": [
       {"key": "draft", "type": "llm", "provider": "fake", "input": "Explain ${input.topic}"},
-      {"key": "publish", "type": "tool", "tool": "uppercase", "input": "${steps.draft.output}"}
+      {"key": "publish", "type": "tool", "tool": "uppercase", "depends_on": ["draft"], "input": "${steps.draft.output}"}
     ]}
   }'
 ```
@@ -123,6 +124,12 @@ releases it after the run finishes. Before claiming new work, workers mark expir
 incomplete steps as failed. They deliberately do not replay interrupted steps automatically.
 
 References support `${input.<key>}` and `${steps.<step-key>.output}`. A reference occupying the entire value preserves JSON types; references embedded in text are stringified.
+
+Steps may declare `depends_on` keys and can appear in any declaration order. The runtime rejects
+unknown, duplicate, self-referential, and cyclic dependencies before persistence, then executes a
+stable topological plan using declaration order to break ties. A definition that uses dependencies
+must converge on exactly one terminal step, whose output becomes the run output. Independent ready
+steps still execute one at a time; concurrent branches remain a separate roadmap item.
 
 Set `max_runtime_seconds` on a workflow definition to bound elapsed engine time across its steps and
 retry backoffs. This budget applies in both synchronous and worker execution; per-step
@@ -203,7 +210,7 @@ per-million-token rates for that provider; partial rate configuration is rejecte
 
 - v0.2: database-backed workers, leases, heartbeats, and terminal expired-run recovery; resumable recovery next
 - v0.3: provider fallback plus OpenAI and Anthropic adapters delivered; encrypted credentials next
-- v0.4: DAG execution, parallel branches, and human approval steps
+- v0.4: dependency-aware DAG planning delivered; parallel branches and human approval steps next
 - v0.5: Prometheus HTTP metrics, workflow time/token/cost budgets, OpenTelemetry traces, and a JSONL evaluation runner delivered
 
 ## License

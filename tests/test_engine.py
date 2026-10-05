@@ -31,6 +31,49 @@ def test_resolve_references_preserves_types_and_supports_interpolation() -> None
     assert resolve_references("${steps.first.output}", inputs, outputs) == [1, 2, 3]
 
 
+async def test_workflow_executes_explicit_dependencies_in_stable_topological_order() -> None:
+    definition = WorkflowDefinition.model_validate(
+        {
+            "steps": [
+                {
+                    "key": "finish",
+                    "type": "tool",
+                    "tool": "uppercase",
+                    "depends_on": ["middle"],
+                    "input": "${steps.middle.output}",
+                },
+                {"key": "start", "type": "tool", "tool": "echo", "input": "hello"},
+                {
+                    "key": "middle",
+                    "type": "tool",
+                    "tool": "uppercase",
+                    "depends_on": ["start"],
+                    "input": "${steps.start.output}",
+                },
+            ]
+        }
+    )
+
+    assert [step.key for step in definition.execution_steps()] == ["start", "middle", "finish"]
+
+    async with TestSession() as session:
+        workflow = Workflow(name="DAG", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test")).execute(session, run, definition)
+
+    assert result.status == RunStatus.completed
+    assert result.output == "HELLO"
+    assert [(step.position, step.step_key) for step in result.steps] == [
+        (0, "start"),
+        (1, "middle"),
+        (2, "finish"),
+    ]
+
+
 async def test_retry_succeeds_after_transient_failure() -> None:
     attempts = 0
 

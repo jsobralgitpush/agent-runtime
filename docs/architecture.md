@@ -29,10 +29,10 @@ sequenceDiagram
 1. The API validates a workflow definition with Pydantic before persisting it.
 2. A client creates a run with inputs and an optional `Idempotency-Key` header.
 3. A unique database constraint guarantees one run per workflow and idempotency key, including races.
-4. The engine resolves input references immediately before each step.
+4. The engine creates a stable topological plan and resolves input references immediately before each step.
 5. Each attempt runs under `asyncio.wait_for`; retry delay grows exponentially.
 6. State and telemetry are committed around execution boundaries so a failure remains inspectable.
-7. The last step output becomes the workflow output.
+7. The terminal step output becomes the workflow output.
 
 ## Components
 
@@ -58,6 +58,13 @@ runtime does not install a tracer provider, exporter, or background processor.
 ### Execution engine
 
 `WorkflowEngine` is an application service rather than a web concern. It accepts a database session, run, and validated definition, so it can later be invoked by a queue worker without changing the workflow semantics.
+
+Definitions can declare dependency edges between steps. Validation rejects unknown, duplicate,
+self-referential, and cyclic edges, and dependency-aware definitions must converge on one terminal
+step that supplies the run output. The planner uses declaration order as a deterministic tie-breaker
+for simultaneously ready nodes. The engine currently executes that topological plan sequentially,
+which establishes DAG semantics without introducing concurrent use of a database session or shared
+budget counters.
 
 ### Evaluation runner
 
@@ -100,6 +107,7 @@ This intentionally avoids an embedded expression language in v0.1. Expression en
 ## Failure semantics
 
 - Provider and tool calls have bounded timeouts.
+- Invalid or ambiguous dependency graphs are rejected before a workflow is persisted.
 - A workflow may define a cumulative wall-clock budget across calls and retry backoffs.
 - A workflow may bound cumulative tokens reported by successful LLM calls.
 - A workflow may bound cumulative estimated cost reported by successful LLM calls.
