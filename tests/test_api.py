@@ -292,9 +292,32 @@ async def test_validation_and_not_found_responses(client: AsyncClient) -> None:
             },
         },
     )
+    invalid_dependency_graph = await client.post(
+        "/v1/workflows",
+        json={
+            "name": "Invalid dependency graph",
+            "definition": {
+                "steps": [
+                    {
+                        "key": "first",
+                        "type": "tool",
+                        "tool": "echo",
+                        "depends_on": ["second"],
+                    },
+                    {
+                        "key": "second",
+                        "type": "tool",
+                        "tool": "echo",
+                        "depends_on": ["first"],
+                    },
+                ]
+            },
+        },
+    )
     missing = await client.get("/v1/runs/not-found")
     assert invalid_target.status_code == 422
     assert invalid_budget.status_code == 422
     assert invalid_token_budget.status_code == 422
     assert invalid_cost_budget.status_code == 422
+    assert invalid_dependency_graph.status_code == 422
     assert missing.status_code == 404

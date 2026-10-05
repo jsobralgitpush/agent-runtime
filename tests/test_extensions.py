@@ -70,6 +70,87 @@ def test_workflow_rejects_invalid_provider_fallback_chains() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("steps", "message"),
+    [
+        (
+            [
+                {
+                    "key": "publish",
+                    "type": "tool",
+                    "tool": "echo",
+                    "depends_on": ["missing"],
+                }
+            ],
+            "depends on unknown steps: missing",
+        ),
+        (
+            [
+                {
+                    "key": "publish",
+                    "type": "tool",
+                    "tool": "echo",
+                    "depends_on": ["publish"],
+                }
+            ],
+            "cannot depend on itself",
+        ),
+        (
+            [
+                {
+                    "key": "first",
+                    "type": "tool",
+                    "tool": "echo",
+                    "depends_on": ["second"],
+                },
+                {
+                    "key": "second",
+                    "type": "tool",
+                    "tool": "echo",
+                    "depends_on": ["first"],
+                },
+            ],
+            "must not contain a cycle",
+        ),
+        (
+            [
+                {
+                    "key": "publish",
+                    "type": "tool",
+                    "tool": "echo",
+                    "depends_on": ["draft", "draft"],
+                },
+                {"key": "draft", "type": "tool", "tool": "echo"},
+            ],
+            "must not contain duplicates",
+        ),
+        (
+            [
+                {"key": "first", "type": "tool", "tool": "echo"},
+                {
+                    "key": "second",
+                    "type": "tool",
+                    "tool": "echo",
+                    "depends_on": ["first"],
+                },
+                {
+                    "key": "independent",
+                    "type": "tool",
+                    "tool": "echo",
+                    "depends_on": ["first"],
+                },
+            ],
+            "must have exactly one terminal step",
+        ),
+    ],
+)
+def test_workflow_rejects_invalid_step_dependencies(
+    steps: list[dict[str, object]], message: str
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        WorkflowDefinition.model_validate({"steps": steps})
+
+
 async def test_provider_registry_and_fake_provider() -> None:
     registry = ProviderRegistry()
     provider = registry.get("fake")

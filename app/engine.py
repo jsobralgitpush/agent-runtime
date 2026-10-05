@@ -212,9 +212,10 @@ class WorkflowEngine:
             if definition.max_runtime_seconds is not None
             else None
         )
+        execution_steps = definition.execution_steps()
 
         try:
-            for position, step in enumerate(definition.steps):
+            for position, step in enumerate(execution_steps):
                 remaining_time_budget(deadline)
                 if (
                     step.type == "llm"
@@ -270,7 +271,7 @@ class WorkflowEngine:
                     raise cost_budget_exceeded(consumed_cost_usd, max_cost_usd)
                 outputs[step.key] = output
             run.status = RunStatus.completed
-            run.output = outputs[definition.steps[-1].key]
+            run.output = outputs[definition.output_step().key]
         except WorkerLeaseLostError:
             lease_lost = True
             await session.rollback()

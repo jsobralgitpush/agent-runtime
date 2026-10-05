@@ -1,9 +1,12 @@
+import re
 from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models import RunStatus
+
+STEP_KEY_PATTERN = r"^[a-z][a-z0-9_-]{0,79}$"
 
 
 class RetryPolicy(BaseModel):
@@ -12,8 +15,9 @@ class RetryPolicy(BaseModel):
 
 
 class WorkflowStep(BaseModel):
-    key: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,79}$")
+    key: str = Field(pattern=STEP_KEY_PATTERN)
     type: Literal["llm", "tool"]
+    depends_on: list[str] = Field(default_factory=list, max_length=49)
     provider: str | None = None
     fallback_providers: list[str] = Field(default_factory=list, max_length=5)
     tool: str | None = None
@@ -29,6 +33,12 @@ class WorkflowStep(BaseModel):
             raise ValueError("Tool steps must specify a tool")
         if self.type == "tool" and self.fallback_providers:
             raise ValueError("Tool steps cannot specify fallback providers")
+        if len(self.depends_on) != len(set(self.depends_on)):
+            raise ValueError("Step dependencies must not contain duplicates")
+        if any(
+            re.fullmatch(STEP_KEY_PATTERN, dependency) is None for dependency in self.depends_on
+        ):
+            raise ValueError("Step dependencies must use valid step keys")
         if any(not name or len(name) > 80 for name in self.fallback_providers):
             raise ValueError("Fallback provider names must contain 1 to 80 characters")
         provider_chain = [self.provider or "fake", *self.fallback_providers]
@@ -46,11 +56,48 @@ class WorkflowDefinition(BaseModel):
     steps: list[WorkflowStep] = Field(min_length=1, max_length=50)
 
     @model_validator(mode="after")
-    def unique_keys(self) -> "WorkflowDefinition":
+    def validate_graph(self) -> "WorkflowDefinition":
         keys = [step.key for step in self.steps]
         if len(keys) != len(set(keys)):
             raise ValueError("Step keys must be unique")
+        known_keys = set(keys)
+        for step in self.steps:
+            if step.key in step.depends_on:
+                raise ValueError(f"Step {step.key!r} cannot depend on itself")
+            unknown = sorted(set(step.depends_on) - known_keys)
+            if unknown:
+                raise ValueError(
+                    f"Step {step.key!r} depends on unknown steps: {', '.join(unknown)}"
+                )
+        self.execution_steps()
+        self.output_step()
         return self
+
+    def execution_steps(self) -> list[WorkflowStep]:
+        """Return a stable topological order, using declaration order as the tie-breaker."""
+        pending = list(self.steps)
+        completed: set[str] = set()
+        ordered: list[WorkflowStep] = []
+        while pending:
+            for index, step in enumerate(pending):
+                if all(dependency in completed for dependency in step.depends_on):
+                    ordered.append(step)
+                    completed.add(step.key)
+                    pending.pop(index)
+                    break
+            else:
+                raise ValueError("Step dependency graph must not contain a cycle")
+        return ordered
+
+    def output_step(self) -> WorkflowStep:
+        """Select the single DAG terminal, or the last step for legacy linear definitions."""
+        if not any(step.depends_on for step in self.steps):
+            return self.steps[-1]
+        dependency_keys = {dependency for step in self.steps for dependency in step.depends_on}
+        terminal_steps = [step for step in self.steps if step.key not in dependency_keys]
+        if len(terminal_steps) != 1:
+            raise ValueError("Step dependency graph must have exactly one terminal step")
+        return terminal_steps[0]
 
 
 class WorkflowCreate(BaseModel):
