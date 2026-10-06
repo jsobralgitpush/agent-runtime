@@ -9,6 +9,7 @@ v0.1 demonstrates production concerns but is not presented as a finished multi-t
 - Workflow size, identifiers, retries, and timeouts have validation bounds.
 - Workflows can bound cumulative execution time, reported LLM token usage, and estimated cost.
 - Step dependency graphs are validated and planned deterministically before execution.
+- Dependency-ready provider and tool calls can run in bounded concurrent waves.
 - Each execution boundary records status, attempts, latency, output, usage, cost, and errors.
 - `/v1/metrics` exposes low-cardinality HTTP request, error, latency, and concurrency metrics.
 - Optional OTLP/HTTP tracing correlates API requests with workflow and step execution.
@@ -28,10 +29,12 @@ a documented at-least-once strategy, especially for side effects.
 
 ### DAG concurrency
 
-Explicit step dependencies are supported, but dependency-ready branches execute sequentially. This
-keeps step persistence, retries, leases, and cumulative budgets on one transactionally simple path.
-Before enabling parallel branches, isolate database sessions per task, define cancellation behavior
-for sibling failures, synchronize token and cost accounting, and bound workflow-level concurrency.
+Parallel branches are explicitly bounded to ten calls and concurrent tasks never share the
+SQLAlchemy session. A failed branch does not cancel already-started siblings; their results remain
+available for diagnosis, but dependent waves do not start. Token and cost budgets are reconciled at
+wave boundaries and can overshoot by the combined usage of one wave. For stronger production
+isolation, add provider-specific concurrency limits, admission control across runs, prompt
+cancellation where APIs support it, and database-backed accounting for tenant-wide quotas.
 
 ### Side-effect idempotency
 

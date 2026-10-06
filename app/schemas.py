@@ -53,6 +53,7 @@ class WorkflowDefinition(BaseModel):
     max_estimated_cost_usd: float | None = Field(
         default=None, gt=0, le=1_000_000, allow_inf_nan=False
     )
+    max_parallel_steps: int = Field(default=1, ge=1, le=10)
     steps: list[WorkflowStep] = Field(min_length=1, max_length=50)
 
     @model_validator(mode="after")
@@ -71,6 +72,8 @@ class WorkflowDefinition(BaseModel):
                 )
         self.execution_steps()
         self.output_step()
+        if self.max_parallel_steps > 1 and not any(step.depends_on for step in self.steps):
+            raise ValueError("Parallel execution requires explicit step dependencies")
         return self
 
     def execution_steps(self) -> list[WorkflowStep]:
@@ -88,6 +91,25 @@ class WorkflowDefinition(BaseModel):
             else:
                 raise ValueError("Step dependency graph must not contain a cycle")
         return ordered
+
+    def execution_batches(self) -> list[list[WorkflowStep]]:
+        """Return bounded dependency-ready waves in deterministic declaration order."""
+        pending = list(self.steps)
+        completed: set[str] = set()
+        batches: list[list[WorkflowStep]] = []
+        while pending:
+            ready = [
+                step
+                for step in pending
+                if all(dependency in completed for dependency in step.depends_on)
+            ][: self.max_parallel_steps]
+            if not ready:
+                raise ValueError("Step dependency graph must not contain a cycle")
+            batches.append(ready)
+            ready_keys = {step.key for step in ready}
+            completed.update(ready_keys)
+            pending = [step for step in pending if step.key not in ready_keys]
+        return batches
 
     def output_step(self) -> WorkflowStep:
         """Select the single DAG terminal, or the last step for legacy linear definitions."""

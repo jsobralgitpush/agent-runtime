@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -212,53 +213,72 @@ class WorkflowEngine:
             if definition.max_runtime_seconds is not None
             else None
         )
-        execution_steps = definition.execution_steps()
-
         try:
-            for position, step in enumerate(execution_steps):
+            position = 0
+            for batch in definition.execution_batches():
                 remaining_time_budget(deadline)
-                if (
-                    step.type == "llm"
-                    and definition.max_total_tokens is not None
-                    and consumed_tokens >= definition.max_total_tokens
-                ):
-                    raise token_budget_exceeded(
-                        consumed_tokens,
-                        definition.max_total_tokens,
-                    )
-                if (
-                    step.type == "llm"
-                    and max_cost_usd is not None
-                    and consumed_cost_usd >= max_cost_usd
-                ):
-                    raise cost_budget_exceeded(consumed_cost_usd, max_cost_usd)
-                step_run = StepRun(
-                    run_id=run.id,
-                    step_key=step.key,
-                    position=position,
-                    step_type=step.type,
-                    status=RunStatus.pending,
-                )
-                session.add(step_run)
-                await session.flush()
-                output = await self._execute_step(
-                    session,
-                    run,
-                    step,
-                    step_run,
-                    outputs,
-                    lease_owner,
-                    deadline,
-                )
-                consumed_tokens += (step_run.prompt_tokens or 0) + (step_run.completion_tokens or 0)
-                if step.type == "llm" and max_cost_usd is not None:
-                    if step_run.estimated_cost_usd is None:
-                        raise WorkflowCostUnavailableError(
-                            "Cannot enforce workflow cost budget because provider "
-                            f"{step_run.provider!r} did not report an estimated cost for step "
-                            f"{step.key!r}"
+                for step in batch:
+                    if (
+                        step.type == "llm"
+                        and definition.max_total_tokens is not None
+                        and consumed_tokens >= definition.max_total_tokens
+                    ):
+                        raise token_budget_exceeded(
+                            consumed_tokens,
+                            definition.max_total_tokens,
                         )
-                    consumed_cost_usd += Decimal(str(step_run.estimated_cost_usd))
+                    if (
+                        step.type == "llm"
+                        and max_cost_usd is not None
+                        and consumed_cost_usd >= max_cost_usd
+                    ):
+                        raise cost_budget_exceeded(consumed_cost_usd, max_cost_usd)
+
+                if len(batch) == 1:
+                    step = batch[0]
+                    step_run = StepRun(
+                        run_id=run.id,
+                        step_key=step.key,
+                        position=position,
+                        step_type=step.type,
+                        status=RunStatus.pending,
+                    )
+                    session.add(step_run)
+                    await session.flush()
+                    output = await self._execute_step(
+                        session,
+                        run,
+                        step,
+                        step_run,
+                        outputs,
+                        lease_owner,
+                        deadline,
+                    )
+                    completed_steps = [(step, step_run, output)]
+                else:
+                    completed_steps = await self._execute_parallel_batch(
+                        session,
+                        run,
+                        batch,
+                        position,
+                        outputs,
+                        lease_owner,
+                        deadline,
+                    )
+
+                for step, step_run, output in completed_steps:
+                    consumed_tokens += (step_run.prompt_tokens or 0) + (
+                        step_run.completion_tokens or 0
+                    )
+                    if step.type == "llm" and max_cost_usd is not None:
+                        if step_run.estimated_cost_usd is None:
+                            raise WorkflowCostUnavailableError(
+                                "Cannot enforce workflow cost budget because provider "
+                                f"{step_run.provider!r} did not report an estimated cost for step "
+                                f"{step.key!r}"
+                            )
+                        consumed_cost_usd += Decimal(str(step_run.estimated_cost_usd))
+                    outputs[step.key] = output
                 if (
                     definition.max_total_tokens is not None
                     and consumed_tokens > definition.max_total_tokens
@@ -269,7 +289,7 @@ class WorkflowEngine:
                     )
                 if max_cost_usd is not None and consumed_cost_usd > max_cost_usd:
                     raise cost_budget_exceeded(consumed_cost_usd, max_cost_usd)
-                outputs[step.key] = output
+                position += len(batch)
             run.status = RunStatus.completed
             run.output = outputs[definition.output_step().key]
         except WorkerLeaseLostError:
@@ -290,6 +310,206 @@ class WorkflowEngine:
 
         logger.info("workflow_run_finished", extra={"run_id": run.id, "status": run.status.value})
         return run
+
+    async def _execute_parallel_batch(
+        self,
+        session: AsyncSession,
+        run: WorkflowRun,
+        steps: list[WorkflowStep],
+        position: int,
+        outputs: dict[str, Any],
+        lease_owner: str | None,
+        deadline: float | None,
+    ) -> list[tuple[WorkflowStep, StepRun, Any]]:
+        step_runs: list[StepRun] = []
+        resolved_inputs: list[Any] = []
+        preparation_errors: dict[int, Exception] = {}
+        for offset, step in enumerate(steps):
+            step_run = StepRun(
+                run_id=run.id,
+                step_key=step.key,
+                position=position + offset,
+                step_type=step.type,
+                status=RunStatus.running,
+                started_at=datetime.now(UTC),
+            )
+            session.add(step_run)
+            step_runs.append(step_run)
+            try:
+                resolved_input = resolve_references(step.input, run.inputs, outputs)
+            except Exception as exc:
+                step_run.status = RunStatus.failed
+                step_run.error = f"{type(exc).__name__}: {exc}"
+                step_run.completed_at = datetime.now(UTC)
+                step_run.latency_ms = 0
+                preparation_errors[offset] = exc
+                resolved_inputs.append(None)
+            else:
+                step_run.input = resolved_input
+                resolved_inputs.append(resolved_input)
+        await session.commit()
+
+        task_indices = [index for index in range(len(steps)) if index not in preparation_errors]
+        task_results = await asyncio.gather(
+            *(
+                self._execute_parallel_step(
+                    run,
+                    steps[index],
+                    step_runs[index],
+                    resolved_inputs[index],
+                    deadline,
+                )
+                for index in task_indices
+            ),
+            return_exceptions=True,
+        )
+        results: list[Any | BaseException] = [
+            preparation_errors.get(index) for index in range(len(steps))
+        ]
+        for index, result in zip(task_indices, task_results, strict=True):
+            results[index] = result
+
+        if lease_owner is not None:
+            await assert_active_lease(session, run.id, lease_owner)
+        await session.commit()
+
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+        return [
+            (step, step_run, result)
+            for step, step_run, result in zip(steps, step_runs, results, strict=True)
+        ]
+
+    async def _execute_parallel_step(
+        self,
+        run: WorkflowRun,
+        step: WorkflowStep,
+        step_run: StepRun,
+        resolved_input: Any,
+        deadline: float | None,
+    ) -> Any:
+        attributes = {
+            "agent_runtime.run.id": run.id,
+            "agent_runtime.step.key": step.key,
+            "agent_runtime.step.type": step.type,
+        }
+        with self.tracer.start_as_current_span(
+            "workflow.step",
+            attributes=attributes,
+            record_exception=False,
+            set_status_on_exception=False,
+        ) as span:
+            try:
+                output = await self._execute_parallel_step_inner(
+                    run,
+                    step,
+                    step_run,
+                    resolved_input,
+                    deadline,
+                )
+            except Exception as exc:
+                span.set_attribute("agent_runtime.step.attempts", step_run.attempts)
+                span.set_attribute("agent_runtime.step.status", step_run.status.value)
+                span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+                raise
+            span.set_attribute("agent_runtime.step.attempts", step_run.attempts)
+            span.set_attribute("agent_runtime.step.status", step_run.status.value)
+            if step_run.provider is not None:
+                span.set_attribute("agent_runtime.step.provider", step_run.provider)
+            return output
+
+    async def _execute_parallel_step_inner(
+        self,
+        run: WorkflowRun,
+        step: WorkflowStep,
+        step_run: StepRun,
+        resolved_input: Any,
+        deadline: float | None,
+    ) -> Any:
+        return await self._run_step_attempts(
+            run,
+            step,
+            step_run,
+            resolved_input,
+            deadline,
+        )
+
+    async def _run_step_attempts(
+        self,
+        run: WorkflowRun,
+        step: WorkflowStep,
+        step_run: StepRun,
+        resolved_input: Any,
+        deadline: float | None,
+        *,
+        persist_state: Callable[[], Awaitable[None]] | None = None,
+        verify_result: Callable[[], Awaitable[None]] | None = None,
+    ) -> Any:
+        timeout = step.timeout_seconds or self.settings.default_step_timeout_seconds
+        max_attempts = min(step.retry.max_attempts, self.settings.max_step_retries + 1)
+        started = time.perf_counter()
+        last_error: Exception | None = None
+
+        for attempt in range(1, max_attempts + 1):
+            step_run.attempts = attempt
+            if persist_state is not None:
+                await persist_state()
+            try:
+                remaining = remaining_time_budget(deadline)
+                attempt_timeout = min(timeout, remaining) if remaining is not None else timeout
+                result = await asyncio.wait_for(
+                    self._dispatch(step, resolved_input, run.id), timeout=attempt_timeout
+                )
+                if verify_result is not None:
+                    await verify_result()
+                output = result.output if isinstance(result, LLMResult) else result
+                step_run.output = output
+                if isinstance(result, LLMResult):
+                    step_run.prompt_tokens = result.prompt_tokens
+                    step_run.completion_tokens = result.completion_tokens
+                    step_run.estimated_cost_usd = result.estimated_cost_usd
+                    step_run.provider = result.provider
+                step_run.status = RunStatus.completed
+                step_run.completed_at = datetime.now(UTC)
+                step_run.latency_ms = round((time.perf_counter() - started) * 1000, 3)
+                if persist_state is not None:
+                    await persist_state()
+                return output
+            except WorkerLeaseLostError:
+                raise
+            except Exception as exc:
+                if (
+                    isinstance(exc, TimeoutError)
+                    and deadline is not None
+                    and time.perf_counter() >= deadline
+                ):
+                    exc = WorkflowTimeBudgetExceededError(
+                        "Workflow execution time budget exhausted"
+                    )
+                last_error = exc
+                step_run.error = f"{type(exc).__name__}: {exc}"
+                if persist_state is not None:
+                    await persist_state()
+                if isinstance(exc, WorkflowTimeBudgetExceededError):
+                    break
+                if attempt < max_attempts:
+                    try:
+                        await wait_for_retry(
+                            step.retry.backoff_seconds * (2 ** (attempt - 1)), deadline
+                        )
+                    except WorkflowTimeBudgetExceededError as budget_error:
+                        last_error = budget_error
+                        break
+
+        step_run.status = RunStatus.failed
+        assert last_error is not None
+        step_run.error = f"{type(last_error).__name__}: {last_error}"
+        step_run.completed_at = datetime.now(UTC)
+        step_run.latency_ms = round((time.perf_counter() - started) * 1000, 3)
+        if persist_state is not None:
+            await persist_state()
+        raise last_error
 
     async def _execute_step(
         self,
@@ -347,67 +567,20 @@ class WorkflowEngine:
         step_run.input = resolved_input
         step_run.status = RunStatus.running
         step_run.started_at = datetime.now(UTC)
-        timeout = step.timeout_seconds or self.settings.default_step_timeout_seconds
-        max_attempts = min(step.retry.max_attempts, self.settings.max_step_retries + 1)
-        started = time.perf_counter()
-        last_error: Exception | None = None
 
-        for attempt in range(1, max_attempts + 1):
-            step_run.attempts = attempt
-            await session.commit()
-            try:
-                remaining = remaining_time_budget(deadline)
-                attempt_timeout = min(timeout, remaining) if remaining is not None else timeout
-                result = await asyncio.wait_for(
-                    self._dispatch(step, resolved_input, run.id), timeout=attempt_timeout
-                )
-                if lease_owner is not None:
-                    await assert_active_lease(session, run.id, lease_owner)
-                output = result.output if isinstance(result, LLMResult) else result
-                step_run.output = output
-                if isinstance(result, LLMResult):
-                    step_run.prompt_tokens = result.prompt_tokens
-                    step_run.completion_tokens = result.completion_tokens
-                    step_run.estimated_cost_usd = result.estimated_cost_usd
-                    step_run.provider = result.provider
-                step_run.status = RunStatus.completed
-                step_run.completed_at = datetime.now(UTC)
-                step_run.latency_ms = round((time.perf_counter() - started) * 1000, 3)
-                await session.commit()
-                return output
-            except WorkerLeaseLostError:
-                await session.rollback()
-                raise
-            except Exception as exc:
-                if (
-                    isinstance(exc, TimeoutError)
-                    and deadline is not None
-                    and time.perf_counter() >= deadline
-                ):
-                    exc = WorkflowTimeBudgetExceededError(
-                        "Workflow execution time budget exhausted"
-                    )
-                last_error = exc
-                step_run.error = f"{type(exc).__name__}: {exc}"
-                await session.commit()
-                if isinstance(exc, WorkflowTimeBudgetExceededError):
-                    break
-                if attempt < max_attempts:
-                    try:
-                        await wait_for_retry(
-                            step.retry.backoff_seconds * (2 ** (attempt - 1)), deadline
-                        )
-                    except WorkflowTimeBudgetExceededError as budget_error:
-                        last_error = budget_error
-                        break
+        async def verify_result() -> None:
+            if lease_owner is not None:
+                await assert_active_lease(session, run.id, lease_owner)
 
-        step_run.status = RunStatus.failed
-        assert last_error is not None
-        step_run.error = f"{type(last_error).__name__}: {last_error}"
-        step_run.completed_at = datetime.now(UTC)
-        step_run.latency_ms = round((time.perf_counter() - started) * 1000, 3)
-        await session.commit()
-        raise last_error
+        return await self._run_step_attempts(
+            run,
+            step,
+            step_run,
+            resolved_input,
+            deadline,
+            persist_state=session.commit,
+            verify_result=verify_result,
+        )
 
     async def _dispatch(self, step: WorkflowStep, value: Any, run_id: str) -> Any:
         if step.type == "llm":
