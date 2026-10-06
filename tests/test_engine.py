@@ -74,6 +74,231 @@ async def test_workflow_executes_explicit_dependencies_in_stable_topological_ord
     ]
 
 
+async def test_dependency_ready_branches_execute_concurrently_and_converge() -> None:
+    started: set[str] = set()
+    both_started = asyncio.Event()
+
+    async def branch(value: object) -> str:
+        assert isinstance(value, str)
+        started.add(value)
+        if len(started) == 2:
+            both_started.set()
+        await asyncio.wait_for(both_started.wait(), timeout=0.1)
+        return value.upper()
+
+    async def combine(value: object) -> str:
+        assert isinstance(value, dict)
+        return f"{value['left']}+{value['right']}"
+
+    tools = ToolRegistry()
+    tools.register("branch", branch)
+    tools.register("combine", combine)
+    definition = WorkflowDefinition.model_validate(
+        {
+            "max_parallel_steps": 2,
+            "steps": [
+                {
+                    "key": "finish",
+                    "type": "tool",
+                    "tool": "combine",
+                    "depends_on": ["left", "right"],
+                    "input": {
+                        "left": "${steps.left.output}",
+                        "right": "${steps.right.output}",
+                    },
+                },
+                {"key": "start", "type": "tool", "tool": "echo", "input": "root"},
+                {
+                    "key": "left",
+                    "type": "tool",
+                    "tool": "branch",
+                    "depends_on": ["start"],
+                    "input": "left",
+                },
+                {
+                    "key": "right",
+                    "type": "tool",
+                    "tool": "branch",
+                    "depends_on": ["start"],
+                    "input": "right",
+                },
+            ],
+        }
+    )
+
+    assert [[step.key for step in batch] for batch in definition.execution_batches()] == [
+        ["start"],
+        ["left", "right"],
+        ["finish"],
+    ]
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Parallel DAG", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), tools=tools).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.completed
+    assert result.output == "LEFT+RIGHT"
+    assert started == {"left", "right"}
+    assert [(step.position, step.step_key) for step in result.steps] == [
+        (0, "start"),
+        (1, "left"),
+        (2, "right"),
+        (3, "finish"),
+    ]
+
+
+async def test_parallel_branch_failure_preserves_sibling_result_and_stops_next_wave() -> None:
+    started: set[str] = set()
+    both_started = asyncio.Event()
+    merged = False
+
+    async def branch(value: object) -> str:
+        assert isinstance(value, str)
+        started.add(value)
+        if len(started) == 2:
+            both_started.set()
+        await asyncio.wait_for(both_started.wait(), timeout=0.1)
+        if value == "right":
+            raise RuntimeError("right failed")
+        return value.upper()
+
+    async def combine(value: object) -> object:
+        nonlocal merged
+        merged = True
+        return value
+
+    tools = ToolRegistry()
+    tools.register("branch", branch)
+    tools.register("combine", combine)
+    definition = WorkflowDefinition.model_validate(
+        {
+            "max_parallel_steps": 2,
+            "steps": [
+                {"key": "start", "type": "tool", "tool": "echo", "input": "root"},
+                {
+                    "key": "left",
+                    "type": "tool",
+                    "tool": "branch",
+                    "depends_on": ["start"],
+                    "input": "left",
+                },
+                {
+                    "key": "right",
+                    "type": "tool",
+                    "tool": "branch",
+                    "depends_on": ["start"],
+                    "input": "right",
+                },
+                {
+                    "key": "finish",
+                    "type": "tool",
+                    "tool": "combine",
+                    "depends_on": ["left", "right"],
+                },
+            ],
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Failed branch", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), tools=tools).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.failed
+    assert "RuntimeError: right failed" in (result.error or "")
+    assert started == {"left", "right"}
+    assert merged is False
+    assert [(step.step_key, step.status) for step in result.steps] == [
+        ("start", RunStatus.completed),
+        ("left", RunStatus.completed),
+        ("right", RunStatus.failed),
+    ]
+
+
+async def test_parallel_llm_wave_accounts_for_all_token_usage_before_failing() -> None:
+    calls = 0
+
+    class MeteredProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            nonlocal calls
+            calls += 1
+            return LLMResult(
+                output=f"generated: {prompt}",
+                prompt_tokens=2,
+                completion_tokens=2,
+                estimated_cost_usd=0.01,
+            )
+
+    providers = ProviderRegistry()
+    providers.register("metered", MeteredProvider())
+    definition = WorkflowDefinition.model_validate(
+        {
+            "max_parallel_steps": 2,
+            "max_total_tokens": 5,
+            "steps": [
+                {"key": "start", "type": "tool", "tool": "echo", "input": "root"},
+                {
+                    "key": "left",
+                    "type": "llm",
+                    "provider": "metered",
+                    "depends_on": ["start"],
+                    "input": "left",
+                },
+                {
+                    "key": "right",
+                    "type": "llm",
+                    "provider": "metered",
+                    "depends_on": ["start"],
+                    "input": "right",
+                },
+                {
+                    "key": "finish",
+                    "type": "tool",
+                    "tool": "echo",
+                    "depends_on": ["left", "right"],
+                },
+            ],
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Parallel budget", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), providers=providers).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.failed
+    assert "budget of 5 exhausted after consuming 8 tokens" in (result.error or "")
+    assert calls == 2
+    assert [(step.step_key, step.status) for step in result.steps] == [
+        ("start", RunStatus.completed),
+        ("left", RunStatus.completed),
+        ("right", RunStatus.completed),
+    ]
+    assert [(step.prompt_tokens, step.completion_tokens) for step in result.steps[1:]] == [
+        (2, 2),
+        (2, 2),
+    ]
+
+
 async def test_retry_succeeds_after_transient_failure() -> None:
     attempts = 0
 

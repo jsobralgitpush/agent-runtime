@@ -31,7 +31,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="Agent Runtime",
     version="0.1.0",
-    description="Durable, observable execution for sequential AI workflows.",
+    description="Durable, observable execution for dependency-aware AI workflows.",
     lifespan=lifespan,
 )
 app.add_middleware(PrometheusMiddleware)

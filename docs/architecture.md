@@ -62,9 +62,15 @@ runtime does not install a tracer provider, exporter, or background processor.
 Definitions can declare dependency edges between steps. Validation rejects unknown, duplicate,
 self-referential, and cyclic edges, and dependency-aware definitions must converge on one terminal
 step that supplies the run output. The planner uses declaration order as a deterministic tie-breaker
-for simultaneously ready nodes. The engine currently executes that topological plan sequentially,
-which establishes DAG semantics without introducing concurrent use of a database session or shared
-budget counters.
+for simultaneously ready nodes. By default the engine remains serial; `max_parallel_steps` can opt
+into bounded waves of concurrent provider and tool calls.
+
+Parallel tasks never access the SQLAlchemy session. The engine persists the wave's running records,
+launches external calls, waits for every sibling, verifies an active worker lease when applicable,
+and commits all terminal step states through the owning coroutine. A branch failure prevents later
+waves but does not discard successful sibling telemetry. Wall-clock limits share one deadline;
+cumulative token and cost limits are reconciled after a wave and may therefore overshoot by the
+usage of all calls already in flight.
 
 ### Evaluation runner
 

@@ -151,6 +151,16 @@ def test_workflow_rejects_invalid_step_dependencies(
         WorkflowDefinition.model_validate({"steps": steps})
 
 
+def test_parallel_execution_requires_an_explicit_dependency_graph() -> None:
+    with pytest.raises(ValidationError, match="requires explicit step dependencies"):
+        WorkflowDefinition.model_validate(
+            {
+                "max_parallel_steps": 2,
+                "steps": [{"key": "only", "type": "tool", "tool": "echo"}],
+            }
+        )
+
+
 async def test_provider_registry_and_fake_provider() -> None:
     registry = ProviderRegistry()
     provider = registry.get("fake")
