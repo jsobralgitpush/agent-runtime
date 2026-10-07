@@ -11,6 +11,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Pluggable LLM providers and tool registry
 - Optional OpenAI and Anthropic providers configured from the environment
 - Explicit step dependencies with bounded parallel DAG branches
+- Durable human approval gates with audited approve/reject decisions
 - Ordered LLM provider fallback with selected-provider telemetry
 - Deterministic local execution without API credentials
 - Exponential retry backoff and per-step timeouts
@@ -35,7 +36,10 @@ flowchart TD
     Engine --> DB
 ```
 
-A run executes synchronously in v0.1. Each step resolves references from the run input or earlier step output, executes within a timeout, persists its attempt and telemetry, then makes its output available to later steps.
+A run executes in the API process by default and can be deferred to a database worker. Each step
+resolves references from the run input or earlier step output, persists its state and telemetry, and
+makes its output available to later steps. An approval step pauses either execution mode durably and
+can be decided through the API.
 
 See [architecture](docs/architecture.md) and [production considerations](docs/production-considerations.md) for the detailed design and trade-offs.
 
@@ -139,6 +143,26 @@ while dependent waves do not start. Time budgets share one deadline. Token and c
 checked between waves, so one parallel wave can exceed the remaining budget before all its usage is
 known.
 
+Use a step with `"type": "approval"` to place a durable human gate in the plan. Its `input` is
+resolved and stored as the review context, then the run moves to `waiting` without starting later
+steps. Approval steps are exclusive waves: ready work declared before the gate may finish, while
+work after it waits for a decision. They do not accept provider, tool, timeout, fallback, or custom
+retry settings.
+
+Record a decision with the waiting run ID:
+
+```bash
+curl -X POST http://localhost:8000/v1/runs/<run-id>/approval \
+  -H 'Content-Type: application/json' \
+  -d '{"decision":"approve","comment":"Reviewed by release manager"}'
+```
+
+`approve` stores the decision on the approval step and resumes from completed step history without
+replaying prior work. `reject` marks both the step and run failed and never starts later steps. Only
+one decision wins: a later request receives `409 Conflict`. The optional comment is limited to 1,000
+characters. A workflow time budget covers each active execution segment; time spent waiting for a
+person is excluded and a fresh active deadline begins when the run resumes.
+
 Set `max_runtime_seconds` on a workflow definition to bound elapsed engine time across its steps and
 retry backoffs. This budget applies in both synchronous and worker execution; per-step
 `timeout_seconds` continues to bound each individual attempt. Provider/tool calls are cancelled at
@@ -213,12 +237,13 @@ per-million-token rates for that provider; partial rate configuration is rejecte
 | `GET` | `/v1/workflows/{id}` | Inspect a workflow |
 | `POST` | `/v1/workflows/{id}/runs` | Execute a run, or enqueue it with `Prefer: respond-async` |
 | `GET` | `/v1/runs/{id}` | Inspect a run and all step telemetry |
+| `POST` | `/v1/runs/{id}/approval` | Approve or reject the run's pending human gate |
 
 ## Roadmap
 
 - v0.2: database-backed workers, leases, heartbeats, and terminal expired-run recovery; resumable recovery next
 - v0.3: provider fallback plus OpenAI and Anthropic adapters delivered; encrypted credentials next
-- v0.4: dependency-aware DAG planning and bounded parallel branches delivered; human approval steps next
+- v0.4: dependency-aware DAG planning, bounded parallel branches, and human approval steps delivered
 - v0.5: Prometheus HTTP metrics, workflow time/token/cost budgets, OpenTelemetry traces, and a JSONL evaluation runner delivered
 
 ## License

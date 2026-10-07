@@ -26,6 +26,7 @@ class Base(DeclarativeBase):
 class RunStatus(StrEnum):
     pending = "pending"
     running = "running"
+    waiting = "waiting"
     completed = "completed"
     failed = "failed"
 

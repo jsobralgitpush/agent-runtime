@@ -72,7 +72,7 @@ async def release_lease(session: AsyncSession, run_id: str, worker_id: str) -> N
         .where(
             WorkflowRun.id == run_id,
             WorkflowRun.lease_owner == worker_id,
-            WorkflowRun.status.in_([RunStatus.completed, RunStatus.failed]),
+            WorkflowRun.status.in_([RunStatus.waiting, RunStatus.completed, RunStatus.failed]),
         )
         .values(lease_owner=None, lease_expires_at=None)
     )

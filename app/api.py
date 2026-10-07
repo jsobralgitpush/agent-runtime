@@ -8,10 +8,11 @@ from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
 from app.database import get_session
-from app.engine import WorkflowEngine
+from app.engine import ApprovalStateError, WorkflowEngine
 from app.metrics import METRICS_CONTENT_TYPE, render_metrics
 from app.models import Workflow, WorkflowRun
 from app.schemas import (
+    ApprovalDecision,
     HealthRead,
     RunCreate,
     RunRead,
@@ -141,3 +142,30 @@ async def get_run(run_id: str, session: Session) -> WorkflowRun:
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return run
+
+
+@router.post("/runs/{run_id}/approval", response_model=RunRead)
+async def decide_approval(
+    run_id: str,
+    payload: ApprovalDecision,
+    session: Session,
+) -> WorkflowRun:
+    run = await session.scalar(
+        select(WorkflowRun)
+        .where(WorkflowRun.id == run_id)
+        .options(selectinload(WorkflowRun.workflow))
+        .with_for_update()
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    definition = WorkflowDefinition.model_validate(run.workflow.definition)
+    try:
+        return await WorkflowEngine(get_settings()).decide_approval(
+            session,
+            run,
+            definition,
+            decision=payload.decision,
+            comment=payload.comment,
+        )
+    except ApprovalStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

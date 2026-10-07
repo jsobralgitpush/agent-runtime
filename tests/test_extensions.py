@@ -161,6 +161,32 @@ def test_parallel_execution_requires_an_explicit_dependency_graph() -> None:
         )
 
 
+def test_approval_step_is_an_exclusive_dependency_ready_wave() -> None:
+    definition = WorkflowDefinition.model_validate(
+        {
+            "max_parallel_steps": 3,
+            "steps": [
+                {"key": "before", "type": "tool", "tool": "echo"},
+                {"key": "review", "type": "approval"},
+                {"key": "after", "type": "tool", "tool": "echo"},
+                {
+                    "key": "finish",
+                    "type": "tool",
+                    "tool": "echo",
+                    "depends_on": ["before", "review", "after"],
+                },
+            ],
+        }
+    )
+
+    assert [[step.key for step in batch] for batch in definition.execution_batches()] == [
+        ["before"],
+        ["review"],
+        ["after"],
+        ["finish"],
+    ]
+
+
 async def test_provider_registry_and_fake_provider() -> None:
     registry = ProviderRegistry()
     provider = registry.get("fake")
