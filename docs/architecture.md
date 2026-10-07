@@ -16,7 +16,7 @@ sequenceDiagram
     Client->>API: POST workflow run
     API->>Store: Insert pending run
     API->>Engine: Execute definition
-    loop Each step
+    loop Each executable step
         Engine->>Store: Insert running step
         Engine->>Target: Execute with timeout
         Target-->>Engine: Output and usage
@@ -33,6 +33,11 @@ sequenceDiagram
 5. Each attempt runs under `asyncio.wait_for`; retry delay grows exponentially.
 6. State and telemetry are committed around execution boundaries so a failure remains inspectable.
 7. The terminal step output becomes the workflow output.
+
+An approval step replaces the target call with a durable boundary: the engine stores its resolved
+review context, changes the step and run to `waiting`, and returns. A later approve decision is
+stored as the step output before the same engine reconstructs prior outputs and resumes. Rejection
+terminalizes the step and run without executing descendants.
 
 ## Components
 
@@ -71,6 +76,14 @@ and commits all terminal step states through the owning coroutine. A branch fail
 waves but does not discard successful sibling telemetry. Wall-clock limits share one deadline;
 cumulative token and cost limits are reconciled after a wave and may therefore overshoot by the
 usage of all calls already in flight.
+
+Approval steps are exclusive waves in the dependency-ready plan. Declaration order remains the
+tie-breaker: ready work before a gate can complete, the gate then pauses the run, and ready work
+after it cannot start early. When execution resumes, the engine rebuilds references and cumulative
+token/cost accounting from completed `StepRun` records. The `(run_id, step_key)` uniqueness
+constraint also prevents a resume path from duplicating a completed step. Human waiting time is
+outside the active execution deadline; `max_runtime_seconds` starts a fresh active segment on each
+resume.
 
 ### Evaluation runner
 
@@ -119,6 +132,8 @@ This intentionally avoids an embedded expression language in v0.1. Expression en
 - A workflow may bound cumulative estimated cost reported by successful LLM calls.
 - A retry policy controls maximum attempts and exponential backoff.
 - A failed step fails the run and prevents later steps from executing.
+- A rejected approval fails the run and prevents later steps from executing.
+- An approval decision is accepted only while exactly one approval step is waiting.
 - Completed prior steps are retained for diagnosis.
 - Error strings are recorded; production adapters must redact secrets before raising.
 

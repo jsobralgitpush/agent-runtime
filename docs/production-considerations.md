@@ -10,6 +10,7 @@ v0.1 demonstrates production concerns but is not presented as a finished multi-t
 - Workflows can bound cumulative execution time, reported LLM token usage, and estimated cost.
 - Step dependency graphs are validated and planned deterministically before execution.
 - Dependency-ready provider and tool calls can run in bounded concurrent waves.
+- Human approval gates persist review context and an approve/reject decision before resuming.
 - Each execution boundary records status, attempts, latency, output, usage, cost, and errors.
 - `/v1/metrics` exposes low-cardinality HTTP request, error, latency, and concurrency metrics.
 - Optional OTLP/HTTP tracing correlates API requests with workflow and step execution.
@@ -39,6 +40,16 @@ cancellation where APIs support it, and database-backed accounting for tenant-wi
 ### Side-effect idempotency
 
 Run creation idempotency does not make arbitrary tools idempotent. Pass a stable operation key (`run_id:step_key`) to side-effecting tools and require downstream idempotency or implement an outbox.
+
+### Human approvals
+
+Approval gates prevent later workflow steps from starting, and row locking makes the first valid
+decision authoritative. The decision and optional comment are stored on the step run. Before
+external traffic, protect the endpoint with tenant-scoped authorization and persist the authenticated
+reviewer identity plus a separate immutable audit event; a free-form comment is not an identity.
+The current approve request resumes work synchronously in the API process. Move approved runs back
+to the durable worker queue before using gates for long-running production workflows. Active
+workflow time budgets restart after approval and intentionally exclude human waiting time.
 
 ### Authentication and tenancy
 

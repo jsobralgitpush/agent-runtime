@@ -45,6 +45,40 @@ async def create_workflow(client: AsyncClient) -> dict[str, object]:
     return response.json()
 
 
+async def create_approval_workflow(client: AsyncClient) -> dict[str, object]:
+    response = await client.post(
+        "/v1/workflows",
+        json={
+            "name": "Reviewed publisher",
+            "definition": {
+                "steps": [
+                    {
+                        "key": "prepare",
+                        "type": "tool",
+                        "tool": "echo",
+                        "input": "${input.message}",
+                    },
+                    {
+                        "key": "review",
+                        "type": "approval",
+                        "depends_on": ["prepare"],
+                        "input": {"candidate": "${steps.prepare.output}"},
+                    },
+                    {
+                        "key": "publish",
+                        "type": "tool",
+                        "tool": "uppercase",
+                        "depends_on": ["review"],
+                        "input": "${steps.prepare.output}",
+                    },
+                ]
+            },
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
 async def test_health(client: AsyncClient) -> None:
     response = await client.get("/v1/health")
     assert response.status_code == 200
@@ -112,6 +146,101 @@ async def test_execute_workflow_and_record_metrics(client: AsyncClient) -> None:
     fetched = await client.get(f"/v1/runs/{run['id']}")
     assert fetched.status_code == 200
     assert fetched.json()["output"] == run["output"]
+
+
+async def test_approval_pauses_and_resumes_without_replaying_completed_steps(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_approval_workflow(client)
+    created = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {"message": "ship it"}},
+    )
+
+    assert created.status_code == 201
+    waiting = created.json()
+    assert waiting["status"] == RunStatus.waiting
+    assert waiting["completed_at"] is None
+    assert waiting["output"] is None
+    assert waiting["lease_owner"] is None
+    assert [(step["step_key"], step["status"]) for step in waiting["steps"]] == [
+        ("prepare", "completed"),
+        ("review", "waiting"),
+    ]
+    assert waiting["steps"][1]["input"] == {"candidate": "ship it"}
+
+    approved = await client.post(
+        f"/v1/runs/{waiting['id']}/approval",
+        json={"decision": "approve", "comment": "Reviewed by release manager"},
+    )
+
+    assert approved.status_code == 200
+    completed = approved.json()
+    assert completed["status"] == RunStatus.completed
+    assert completed["output"] == "SHIP IT"
+    assert [step["step_key"] for step in completed["steps"]] == [
+        "prepare",
+        "review",
+        "publish",
+    ]
+    assert completed["steps"][1]["attempts"] == 0
+    assert completed["steps"][1]["output"] == {
+        "decision": "approve",
+        "comment": "Reviewed by release manager",
+    }
+
+    repeated = await client.post(
+        f"/v1/runs/{waiting['id']}/approval",
+        json={"decision": "approve"},
+    )
+    assert repeated.status_code == 409
+
+
+async def test_rejected_approval_fails_run_without_executing_later_steps(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_approval_workflow(client)
+    created = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {"message": "do not ship"}},
+    )
+    run_id = created.json()["id"]
+
+    rejected = await client.post(
+        f"/v1/runs/{run_id}/approval",
+        json={"decision": "reject", "comment": "Needs security review"},
+    )
+
+    assert rejected.status_code == 200
+    run = rejected.json()
+    assert run["status"] == RunStatus.failed
+    assert run["error"] == "HumanApprovalRejected: approval was rejected"
+    assert [step["step_key"] for step in run["steps"]] == ["prepare", "review"]
+    assert run["steps"][1]["status"] == RunStatus.failed
+    assert run["steps"][1]["output"] == {
+        "decision": "reject",
+        "comment": "Needs security review",
+    }
+
+
+async def test_worker_releases_lease_when_run_waits_for_approval(client: AsyncClient) -> None:
+    workflow = await create_approval_workflow(client)
+    created = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {"message": "queued"}},
+        headers={"Prefer": "respond-async"},
+    )
+
+    assert await run_worker_once(
+        TestSession,
+        Settings(app_env="test", worker_id="approval-worker"),
+    )
+    fetched = await client.get(f"/v1/runs/{created.json()['id']}")
+    run = fetched.json()
+    assert run["status"] == RunStatus.waiting
+    assert run["lease_owner"] is None
+    assert run["lease_expires_at"] is None
+    assert [step["status"] for step in run["steps"]] == ["completed", "waiting"]
 
 
 async def test_idempotency_returns_original_run(client: AsyncClient) -> None:
@@ -324,11 +453,32 @@ async def test_validation_and_not_found_responses(client: AsyncClient) -> None:
             },
         },
     )
+    invalid_approval = await client.post(
+        "/v1/workflows",
+        json={
+            "name": "Invalid approval",
+            "definition": {
+                "steps": [
+                    {
+                        "key": "review",
+                        "type": "approval",
+                        "provider": "fake",
+                    }
+                ]
+            },
+        },
+    )
     missing = await client.get("/v1/runs/not-found")
+    missing_approval = await client.post(
+        "/v1/runs/not-found/approval",
+        json={"decision": "approve"},
+    )
     assert invalid_target.status_code == 422
     assert invalid_budget.status_code == 422
     assert invalid_token_budget.status_code == 422
     assert invalid_cost_budget.status_code == 422
     assert invalid_dependency_graph.status_code == 422
     assert invalid_parallel_workflow.status_code == 422
+    assert invalid_approval.status_code == 422
     assert missing.status_code == 404
+    assert missing_approval.status_code == 404

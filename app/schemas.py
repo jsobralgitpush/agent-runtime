@@ -16,7 +16,7 @@ class RetryPolicy(BaseModel):
 
 class WorkflowStep(BaseModel):
     key: str = Field(pattern=STEP_KEY_PATTERN)
-    type: Literal["llm", "tool"]
+    type: Literal["llm", "tool", "approval"]
     depends_on: list[str] = Field(default_factory=list, max_length=49)
     provider: str | None = None
     fallback_providers: list[str] = Field(default_factory=list, max_length=5)
@@ -33,6 +33,17 @@ class WorkflowStep(BaseModel):
             raise ValueError("Tool steps must specify a tool")
         if self.type == "tool" and self.fallback_providers:
             raise ValueError("Tool steps cannot specify fallback providers")
+        if self.type == "approval" and (
+            self.tool is not None
+            or self.provider is not None
+            or self.fallback_providers
+            or self.timeout_seconds is not None
+            or self.retry != RetryPolicy()
+        ):
+            raise ValueError(
+                "Approval steps cannot specify a tool, provider, fallback providers, timeout, "
+                "or custom retry policy"
+            )
         if len(self.depends_on) != len(set(self.depends_on)):
             raise ValueError("Step dependencies must not contain duplicates")
         if any(
@@ -102,9 +113,22 @@ class WorkflowDefinition(BaseModel):
                 step
                 for step in pending
                 if all(dependency in completed for dependency in step.depends_on)
-            ][: self.max_parallel_steps]
+            ]
             if not ready:
                 raise ValueError("Step dependency graph must not contain a cycle")
+            # A human gate is an exclusive execution wave. Preserve declaration order:
+            # work declared before the gate may finish, but nothing declared after it
+            # starts until a decision has been recorded.
+            approval_index = next(
+                (index for index, step in enumerate(ready) if step.type == "approval"),
+                None,
+            )
+            if approval_index == 0:
+                ready = ready[:1]
+            elif approval_index is not None:
+                ready = ready[: min(approval_index, self.max_parallel_steps)]
+            else:
+                ready = ready[: self.max_parallel_steps]
             batches.append(ready)
             ready_keys = {step.key for step in ready}
             completed.update(ready_keys)
@@ -140,6 +164,11 @@ class WorkflowRead(BaseModel):
 
 class RunCreate(BaseModel):
     inputs: dict[str, Any] = Field(default_factory=dict)
+
+
+class ApprovalDecision(BaseModel):
+    decision: Literal["approve", "reject"]
+    comment: str | None = Field(default=None, max_length=1000)
 
 
 class StepRunRead(BaseModel):

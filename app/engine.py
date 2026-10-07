@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode, Tracer
@@ -45,6 +45,10 @@ class WorkflowCostBudgetExceededError(RuntimeError):
 
 
 class WorkflowCostUnavailableError(RuntimeError):
+    pass
+
+
+class ApprovalStateError(RuntimeError):
     pass
 
 
@@ -185,6 +189,51 @@ class WorkflowEngine:
                 span.set_status(Status(StatusCode.ERROR))
             return result
 
+    async def decide_approval(
+        self,
+        session: AsyncSession,
+        run: WorkflowRun,
+        definition: WorkflowDefinition,
+        *,
+        decision: Literal["approve", "reject"],
+        comment: str | None,
+    ) -> WorkflowRun:
+        locked_status = await session.scalar(
+            select(WorkflowRun.status).where(WorkflowRun.id == run.id).with_for_update()
+        )
+        if locked_status != RunStatus.waiting:
+            raise ApprovalStateError("Run is not waiting for approval")
+        waiting_steps = list(
+            await session.scalars(
+                select(StepRun).where(
+                    StepRun.run_id == run.id,
+                    StepRun.step_type == "approval",
+                    StepRun.status == RunStatus.waiting,
+                )
+            )
+        )
+        if len(waiting_steps) != 1:
+            raise ApprovalStateError("Run has no single pending approval")
+
+        approval_step = waiting_steps[0]
+        approval_step.output = {"decision": decision, "comment": comment}
+        approval_step.completed_at = datetime.now(UTC)
+        if decision == "reject":
+            error = "HumanApprovalRejected: approval was rejected"
+            approval_step.status = RunStatus.failed
+            approval_step.error = error
+            run.status = RunStatus.failed
+            run.error = error
+            run.completed_at = approval_step.completed_at
+            await session.commit()
+            await session.refresh(run, attribute_names=["steps"])
+            return run
+
+        approval_step.status = RunStatus.completed
+        run.status = RunStatus.running
+        await session.commit()
+        return await self.execute(session, run, definition)
+
     async def _execute_workflow(
         self,
         session: AsyncSession,
@@ -193,9 +242,32 @@ class WorkflowEngine:
         *,
         lease_owner: str | None = None,
     ) -> WorkflowRun:
-        outputs: dict[str, Any] = {}
-        consumed_tokens = 0
-        consumed_cost_usd = Decimal(0)
+        existing_step_runs = list(
+            await session.scalars(
+                select(StepRun).where(StepRun.run_id == run.id).order_by(StepRun.position)
+            )
+        )
+        completed_step_runs = {
+            step_run.step_key: step_run
+            for step_run in existing_step_runs
+            if step_run.status == RunStatus.completed
+        }
+        outputs = {step_key: step_run.output for step_key, step_run in completed_step_runs.items()}
+        consumed_tokens = sum(
+            (step_run.prompt_tokens or 0) + (step_run.completion_tokens or 0)
+            for step_run in completed_step_runs.values()
+        )
+        consumed_cost_usd = sum(
+            (
+                (
+                    Decimal(str(step_run.estimated_cost_usd))
+                    if step_run.estimated_cost_usd is not None
+                    else Decimal(0)
+                )
+                for step_run in completed_step_runs.values()
+            ),
+            Decimal(0),
+        )
         max_cost_usd = (
             Decimal(str(definition.max_estimated_cost_usd))
             if definition.max_estimated_cost_usd is not None
@@ -203,7 +275,10 @@ class WorkflowEngine:
         )
         lease_lost = False
         run.status = RunStatus.running
-        run.started_at = datetime.now(UTC)
+        run.error = None
+        run.completed_at = None
+        if run.started_at is None:
+            run.started_at = datetime.now(UTC)
         await session.commit()
         logger.info(
             "workflow_run_started", extra={"run_id": run.id, "workflow_id": run.workflow_id}
@@ -214,8 +289,30 @@ class WorkflowEngine:
             else None
         )
         try:
-            position = 0
+            position_by_key = {
+                step.key: position for position, step in enumerate(definition.execution_steps())
+            }
+            step_by_key = {step.key: step for step in definition.steps}
+            if max_cost_usd is not None:
+                missing_cost = next(
+                    (
+                        step_key
+                        for step_key, step_run in completed_step_runs.items()
+                        if step_by_key[step_key].type == "llm"
+                        and step_run.estimated_cost_usd is None
+                    ),
+                    None,
+                )
+                if missing_cost is not None:
+                    raise WorkflowCostUnavailableError(
+                        "Cannot enforce workflow cost budget because completed step "
+                        f"{missing_cost!r} has no estimated cost"
+                    )
+            waiting_for_approval = False
             for batch in definition.execution_batches():
+                batch = [step for step in batch if step.key not in completed_step_runs]
+                if not batch:
+                    continue
                 remaining_time_budget(deadline)
                 for step in batch:
                     if (
@@ -239,12 +336,24 @@ class WorkflowEngine:
                     step_run = StepRun(
                         run_id=run.id,
                         step_key=step.key,
-                        position=position,
+                        position=position_by_key[step.key],
                         step_type=step.type,
                         status=RunStatus.pending,
                     )
                     session.add(step_run)
                     await session.flush()
+                    if step.type == "approval":
+                        step_run.input = resolve_references(step.input, run.inputs, outputs)
+                        step_run.status = RunStatus.waiting
+                        step_run.started_at = datetime.now(UTC)
+                        if lease_owner is not None:
+                            await assert_active_lease(session, run.id, lease_owner)
+                        run.status = RunStatus.waiting
+                        run.lease_owner = None
+                        run.lease_expires_at = None
+                        await session.commit()
+                        waiting_for_approval = True
+                        break
                     output = await self._execute_step(
                         session,
                         run,
@@ -260,7 +369,7 @@ class WorkflowEngine:
                         session,
                         run,
                         batch,
-                        position,
+                        position_by_key,
                         outputs,
                         lease_owner,
                         deadline,
@@ -289,9 +398,9 @@ class WorkflowEngine:
                     )
                 if max_cost_usd is not None and consumed_cost_usd > max_cost_usd:
                     raise cost_budget_exceeded(consumed_cost_usd, max_cost_usd)
-                position += len(batch)
-            run.status = RunStatus.completed
-            run.output = outputs[definition.output_step().key]
+            if not waiting_for_approval:
+                run.status = RunStatus.completed
+                run.output = outputs[definition.output_step().key]
         except WorkerLeaseLostError:
             lease_lost = True
             await session.rollback()
@@ -304,7 +413,8 @@ class WorkflowEngine:
             if lease_lost:
                 await session.refresh(run)
             else:
-                run.completed_at = datetime.now(UTC)
+                if run.status in (RunStatus.completed, RunStatus.failed):
+                    run.completed_at = datetime.now(UTC)
                 await session.commit()
             await session.refresh(run, attribute_names=["steps"])
 
@@ -316,7 +426,7 @@ class WorkflowEngine:
         session: AsyncSession,
         run: WorkflowRun,
         steps: list[WorkflowStep],
-        position: int,
+        position_by_key: dict[str, int],
         outputs: dict[str, Any],
         lease_owner: str | None,
         deadline: float | None,
@@ -328,7 +438,7 @@ class WorkflowEngine:
             step_run = StepRun(
                 run_id=run.id,
                 step_key=step.key,
-                position=position + offset,
+                position=position_by_key[step.key],
                 step_type=step.type,
                 status=RunStatus.running,
                 started_at=datetime.now(UTC),
