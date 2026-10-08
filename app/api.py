@@ -10,7 +10,7 @@ from app.config import get_settings
 from app.database import get_session
 from app.engine import ApprovalStateError, WorkflowEngine
 from app.metrics import METRICS_CONTENT_TYPE, render_metrics
-from app.models import Workflow, WorkflowRun
+from app.models import RunStatus, Workflow, WorkflowRun
 from app.schemas import (
     ApprovalDecision,
     HealthRead,
@@ -23,6 +23,10 @@ from app.schemas import (
 
 router = APIRouter()
 Session = Annotated[AsyncSession, Depends(get_session)]
+
+
+def _prefers_async(value: str | None) -> bool:
+    return bool(value and "respond-async" in {item.strip().lower() for item in value.split(",")})
 
 
 @router.get("/health", response_model=HealthRead, tags=["operations"])
@@ -125,7 +129,7 @@ async def create_run(
         raise
 
     await session.refresh(run)
-    if prefer and "respond-async" in {item.strip().lower() for item in prefer.split(",")}:
+    if _prefers_async(prefer):
         response.status_code = status.HTTP_202_ACCEPTED
         await session.refresh(run, attribute_names=["steps"])
         return run
@@ -149,6 +153,8 @@ async def decide_approval(
     run_id: str,
     payload: ApprovalDecision,
     session: Session,
+    response: Response,
+    prefer: Annotated[str | None, Header(max_length=255)] = None,
 ) -> WorkflowRun:
     run = await session.scalar(
         select(WorkflowRun)
@@ -160,12 +166,16 @@ async def decide_approval(
         raise HTTPException(status_code=404, detail="Run not found")
     definition = WorkflowDefinition.model_validate(run.workflow.definition)
     try:
-        return await WorkflowEngine(get_settings()).decide_approval(
+        result = await WorkflowEngine(get_settings()).decide_approval(
             session,
             run,
             definition,
             decision=payload.decision,
             comment=payload.comment,
+            defer=_prefers_async(prefer),
         )
+        if result.status == RunStatus.pending:
+            response.status_code = status.HTTP_202_ACCEPTED
+        return result
     except ApprovalStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

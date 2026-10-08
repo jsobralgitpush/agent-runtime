@@ -197,6 +197,7 @@ class WorkflowEngine:
         *,
         decision: Literal["approve", "reject"],
         comment: str | None,
+        defer: bool = False,
     ) -> WorkflowRun:
         locked_status = await session.scalar(
             select(WorkflowRun.status).where(WorkflowRun.id == run.id).with_for_update()
@@ -230,6 +231,11 @@ class WorkflowEngine:
             return run
 
         approval_step.status = RunStatus.completed
+        if defer:
+            run.status = RunStatus.pending
+            await session.commit()
+            await session.refresh(run, attribute_names=["steps"])
+            return run
         run.status = RunStatus.running
         await session.commit()
         return await self.execute(session, run, definition)

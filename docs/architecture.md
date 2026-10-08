@@ -39,6 +39,11 @@ review context, changes the step and run to `waiting`, and returns. A later appr
 stored as the step output before the same engine reconstructs prior outputs and resumes. Rejection
 terminalizes the step and run without executing descendants.
 
+Approval can resume immediately in the API process or, with `Prefer: respond-async`, transition the
+run back to `pending` and return `202 Accepted`. The normal worker claim path then leases the run and
+invokes the same resume-aware engine. Queueing the continuation is an explicit client choice so the
+existing synchronous API remains backward compatible.
+
 ## Components
 
 ### API

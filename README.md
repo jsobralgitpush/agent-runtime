@@ -163,6 +163,11 @@ one decision wins: a later request receives `409 Conflict`. The optional comment
 characters. A workflow time budget covers each active execution segment; time spent waiting for a
 person is excluded and a fresh active deadline begins when the run resumes.
 
+For a durable continuation, add `Prefer: respond-async` to an approve request. The API records the
+decision, moves the run to `pending`, and returns `202 Accepted`; a database worker then claims it,
+rebuilds prior outputs and budget usage from completed steps, and executes only the remaining plan.
+The preference is ignored for rejection because rejection is already a terminal state.
+
 Set `max_runtime_seconds` on a workflow definition to bound elapsed engine time across its steps and
 retry backoffs. This budget applies in both synchronous and worker execution; per-step
 `timeout_seconds` continues to bound each individual attempt. Provider/tool calls are cancelled at
@@ -241,7 +246,7 @@ per-million-token rates for that provider; partial rate configuration is rejecte
 
 ## Roadmap
 
-- v0.2: database-backed workers, leases, heartbeats, and terminal expired-run recovery; resumable recovery next
+- v0.2: database workers, leases, terminal recovery, and worker-backed approval continuation delivered; general interrupted-step recovery next
 - v0.3: provider fallback plus OpenAI and Anthropic adapters delivered; encrypted credentials next
 - v0.4: dependency-aware DAG planning, bounded parallel branches, and human approval steps delivered
 - v0.5: Prometheus HTTP metrics, workflow time/token/cost budgets, OpenTelemetry traces, and a JSONL evaluation runner delivered

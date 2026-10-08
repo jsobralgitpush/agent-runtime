@@ -209,6 +209,7 @@ async def test_rejected_approval_fails_run_without_executing_later_steps(
     rejected = await client.post(
         f"/v1/runs/{run_id}/approval",
         json={"decision": "reject", "comment": "Needs security review"},
+        headers={"Prefer": "respond-async"},
     )
 
     assert rejected.status_code == 200
@@ -223,7 +224,7 @@ async def test_rejected_approval_fails_run_without_executing_later_steps(
     }
 
 
-async def test_worker_releases_lease_when_run_waits_for_approval(client: AsyncClient) -> None:
+async def test_worker_releases_lease_and_resumes_approved_run(client: AsyncClient) -> None:
     workflow = await create_approval_workflow(client)
     created = await client.post(
         f"/v1/workflows/{workflow['id']}/runs",
@@ -241,6 +242,33 @@ async def test_worker_releases_lease_when_run_waits_for_approval(client: AsyncCl
     assert run["lease_owner"] is None
     assert run["lease_expires_at"] is None
     assert [step["status"] for step in run["steps"]] == ["completed", "waiting"]
+
+    approved = await client.post(
+        f"/v1/runs/{run['id']}/approval",
+        json={"decision": "approve", "comment": "Queue the continuation"},
+        headers={"Prefer": "Respond-Async"},
+    )
+    assert approved.status_code == 202
+    assert approved.json()["status"] == RunStatus.pending
+    assert [step["status"] for step in approved.json()["steps"]] == [
+        "completed",
+        "completed",
+    ]
+
+    assert await run_worker_once(
+        TestSession,
+        Settings(app_env="test", worker_id="resume-worker"),
+    )
+    completed = await client.get(f"/v1/runs/{run['id']}")
+    resumed = completed.json()
+    assert resumed["status"] == RunStatus.completed
+    assert resumed["output"] == "QUEUED"
+    assert resumed["lease_owner"] is None
+    assert [step["step_key"] for step in resumed["steps"]] == [
+        "prepare",
+        "review",
+        "publish",
+    ]
 
 
 async def test_idempotency_returns_original_run(client: AsyncClient) -> None:
