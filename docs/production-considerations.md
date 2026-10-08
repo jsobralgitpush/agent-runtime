@@ -44,12 +44,12 @@ Run creation idempotency does not make arbitrary tools idempotent. Pass a stable
 ### Human approvals
 
 Approval gates prevent later workflow steps from starting, and row locking makes the first valid
-decision authoritative. The decision and optional comment are stored on the step run. Before
-external traffic, protect the endpoint with tenant-scoped authorization and persist the authenticated
-reviewer identity plus a separate immutable audit event; a free-form comment is not an identity.
-The current approve request resumes work synchronously in the API process. Move approved runs back
-to the durable worker queue before using gates for long-running production workflows. Active
-workflow time budgets restart after approval and intentionally exclude human waiting time.
+decision authoritative. The decision and optional comment are stored on the step run. Approvals can
+use `Prefer: respond-async` to re-enter the durable worker queue; without it they resume in the API
+process for backward compatibility. Before external traffic, protect the endpoint with tenant-scoped
+authorization and persist the authenticated reviewer identity plus a separate immutable audit event;
+a free-form comment is not an identity. Active workflow time budgets restart after approval and
+intentionally exclude human waiting time.
 
 ### Authentication and tenancy
 
