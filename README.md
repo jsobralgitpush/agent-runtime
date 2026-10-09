@@ -127,7 +127,13 @@ records a worker ID and lease deadline; the worker extends the lease with period
 releases it after the run finishes. Before claiming new work, workers mark expired runs and their
 incomplete steps as failed. They deliberately do not replay interrupted steps automatically.
 
-References support `${input.<key>}` and `${steps.<step-key>.output}`. A reference occupying the entire value preserves JSON types; references embedded in text are stringified.
+References support `${input.<key>}`, `${steps.<step-key>.output}`, and runtime context values:
+`${runtime.run_id}`, `${runtime.step_key}`, and `${runtime.operation_key}`. The operation key has the
+stable form `run_id:step_key`, so a side-effecting tool can pass it to a downstream idempotency
+header or unique constraint. It stays unchanged across retries and safe workflow resumptions. A
+reference occupying the entire value preserves JSON types; references embedded in text are
+stringified. Supplying a key does not make a tool idempotent by itself—the downstream operation must
+enforce it.
 
 Steps may declare `depends_on` keys and can appear in any declaration order. The runtime rejects
 unknown, duplicate, self-referential, and cyclic dependencies before persistence, then executes a
@@ -246,7 +252,7 @@ per-million-token rates for that provider; partial rate configuration is rejecte
 
 ## Roadmap
 
-- v0.2: database workers, leases, terminal recovery, and worker-backed approval continuation delivered; general interrupted-step recovery next
+- v0.2: database workers, leases, terminal recovery, worker-backed approval continuation, and stable operation keys delivered; general interrupted-step recovery next
 - v0.3: provider fallback plus OpenAI and Anthropic adapters delivered; encrypted credentials next
 - v0.4: dependency-aware DAG planning, bounded parallel branches, and human approval steps delivered
 - v0.5: Prometheus HTTP metrics, workflow time/token/cost budgets, OpenTelemetry traces, and a JSONL evaluation runner delivered

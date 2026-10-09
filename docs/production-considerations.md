@@ -39,7 +39,10 @@ cancellation where APIs support it, and database-backed accounting for tenant-wi
 
 ### Side-effect idempotency
 
-Run creation idempotency does not make arbitrary tools idempotent. Pass a stable operation key (`run_id:step_key`) to side-effecting tools and require downstream idempotency or implement an outbox.
+Run creation idempotency does not make arbitrary tools idempotent. Workflow inputs can include
+`${runtime.operation_key}` to receive a stable `run_id:step_key` value. Pass it to a downstream
+idempotency header or unique constraint, or implement an outbox. The runtime cannot verify that a
+custom tool actually enforces the key, so interrupted side effects remain non-replayable by default.
 
 ### Human approvals
 

@@ -21,7 +21,7 @@ from app.schemas import WorkflowDefinition, WorkflowStep
 from app.tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
-REFERENCE = re.compile(r"\$\{(input|steps)\.([a-zA-Z0-9_-]+)(?:\.output)?\}")
+REFERENCE = re.compile(r"\$\{(input|steps|runtime)\.([a-zA-Z0-9_-]+)(?:\.output)?\}")
 
 
 class WorkerLeaseLostError(RuntimeError):
@@ -116,30 +116,55 @@ async def assert_active_lease(
         raise WorkerLeaseLostError(f"Worker {lease_owner} no longer owns run {run_id}")
 
 
-def _lookup_reference(match: re.Match[str], inputs: dict[str, Any], outputs: dict[str, Any]) -> Any:
+def _lookup_reference(
+    match: re.Match[str],
+    inputs: dict[str, Any],
+    outputs: dict[str, Any],
+    runtime: dict[str, str] | None,
+) -> Any:
     namespace, key = match.group(1), match.group(2)
-    source = inputs if namespace == "input" else outputs
+    sources: dict[str, dict[str, Any]] = {
+        "input": inputs,
+        "steps": outputs,
+        "runtime": runtime or {},
+    }
+    source = sources[namespace]
     if key not in source:
         raise ValueError(f"Unknown workflow reference: {match.group(0)}")
     return source[key]
 
 
-def resolve_references(value: Any, inputs: dict[str, Any], outputs: dict[str, Any]) -> Any:
+def resolve_references(
+    value: Any,
+    inputs: dict[str, Any],
+    outputs: dict[str, Any],
+    runtime: dict[str, str] | None = None,
+) -> Any:
     if isinstance(value, dict):
-        return {key: resolve_references(item, inputs, outputs) for key, item in value.items()}
+        return {
+            key: resolve_references(item, inputs, outputs, runtime) for key, item in value.items()
+        }
     if isinstance(value, list):
-        return [resolve_references(item, inputs, outputs) for item in value]
+        return [resolve_references(item, inputs, outputs, runtime) for item in value]
     if not isinstance(value, str):
         return value
     full_match = REFERENCE.fullmatch(value)
     if full_match:
-        return _lookup_reference(full_match, inputs, outputs)
+        return _lookup_reference(full_match, inputs, outputs, runtime)
 
     def replace(match: re.Match[str]) -> str:
-        resolved = _lookup_reference(match, inputs, outputs)
+        resolved = _lookup_reference(match, inputs, outputs, runtime)
         return resolved if isinstance(resolved, str) else json.dumps(resolved, sort_keys=True)
 
     return REFERENCE.sub(replace, value)
+
+
+def _runtime_context(run: WorkflowRun, step: WorkflowStep) -> dict[str, str]:
+    return {
+        "run_id": run.id,
+        "step_key": step.key,
+        "operation_key": f"{run.id}:{step.key}",
+    }
 
 
 class WorkflowEngine:
@@ -349,7 +374,12 @@ class WorkflowEngine:
                     session.add(step_run)
                     await session.flush()
                     if step.type == "approval":
-                        step_run.input = resolve_references(step.input, run.inputs, outputs)
+                        step_run.input = resolve_references(
+                            step.input,
+                            run.inputs,
+                            outputs,
+                            _runtime_context(run, step),
+                        )
                         step_run.status = RunStatus.waiting
                         step_run.started_at = datetime.now(UTC)
                         if lease_owner is not None:
@@ -452,7 +482,12 @@ class WorkflowEngine:
             session.add(step_run)
             step_runs.append(step_run)
             try:
-                resolved_input = resolve_references(step.input, run.inputs, outputs)
+                resolved_input = resolve_references(
+                    step.input,
+                    run.inputs,
+                    outputs,
+                    _runtime_context(run, step),
+                )
             except Exception as exc:
                 step_run.status = RunStatus.failed
                 step_run.error = f"{type(exc).__name__}: {exc}"
@@ -679,7 +714,12 @@ class WorkflowEngine:
         lease_owner: str | None,
         deadline: float | None,
     ) -> Any:
-        resolved_input = resolve_references(step.input, run.inputs, outputs)
+        resolved_input = resolve_references(
+            step.input,
+            run.inputs,
+            outputs,
+            _runtime_context(run, step),
+        )
         step_run.input = resolved_input
         step_run.status = RunStatus.running
         step_run.started_at = datetime.now(UTC)

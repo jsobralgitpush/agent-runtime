@@ -124,7 +124,12 @@ Non-text blocks such as model thinking remain outside the runtime's provider-neu
 
 ## Reference model
 
-Steps can refer to `${input.key}` or `${steps.step-key.output}`. References are resolved recursively inside dictionaries and lists. Full-value references preserve their JSON type; interpolation into a larger string produces text.
+Steps can refer to `${input.key}`, `${steps.step-key.output}`, `${runtime.run_id}`,
+`${runtime.step_key}`, or `${runtime.operation_key}`. Runtime values are derived by the engine for
+the current step; the operation key is `run_id:step_key`. References are resolved recursively inside
+dictionaries and lists before the first attempt, so every retry and safe resume uses the same
+resolved operation key. Full-value references preserve their JSON type; interpolation into a larger
+string produces text.
 
 This intentionally avoids an embedded expression language in v0.1. Expression engines add attack surface, nondeterminism, and a second programming model.
 
