@@ -62,7 +62,10 @@ async def create_approval_workflow(client: AsyncClient) -> dict[str, object]:
                         "key": "review",
                         "type": "approval",
                         "depends_on": ["prepare"],
-                        "input": {"candidate": "${steps.prepare.output}"},
+                        "input": {
+                            "candidate": "${steps.prepare.output}",
+                            "operation_key": "${runtime.operation_key}",
+                        },
                     },
                     {
                         "key": "publish",
@@ -167,7 +170,10 @@ async def test_approval_pauses_and_resumes_without_replaying_completed_steps(
         ("prepare", "completed"),
         ("review", "waiting"),
     ]
-    assert waiting["steps"][1]["input"] == {"candidate": "ship it"}
+    assert waiting["steps"][1]["input"] == {
+        "candidate": "ship it",
+        "operation_key": f"{waiting['id']}:review",
+    }
 
     approved = await client.post(
         f"/v1/runs/{waiting['id']}/approval",

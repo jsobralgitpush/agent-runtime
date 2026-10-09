@@ -1,6 +1,7 @@
 import asyncio
 from typing import Any
 
+import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -29,6 +30,71 @@ def test_resolve_references_preserves_types_and_supports_interpolation() -> None
     assert resolve_references("${input.payload}", inputs, outputs) == {"answer": 42}
     assert resolve_references("Hello ${input.name}", inputs, outputs) == "Hello Robin"
     assert resolve_references("${steps.first.output}", inputs, outputs) == [1, 2, 3]
+    runtime = {
+        "run_id": "run-1",
+        "step_key": "publish",
+        "operation_key": "run-1:publish",
+    }
+    assert resolve_references("${runtime.operation_key}", inputs, outputs, runtime) == (
+        "run-1:publish"
+    )
+    assert resolve_references("Run ${runtime.run_id}", inputs, outputs, runtime) == "Run run-1"
+    with pytest.raises(ValueError, match="Unknown workflow reference"):
+        resolve_references("${runtime.missing}", inputs, outputs, runtime)
+
+
+async def test_runtime_context_is_stable_across_tool_retries() -> None:
+    received: list[dict[str, object]] = []
+
+    async def capture(value: object) -> object:
+        assert isinstance(value, dict)
+        received.append(value)
+        if len(received) == 1:
+            raise RuntimeError("retry once")
+        return value
+
+    tools = ToolRegistry()
+    tools.register("capture", capture)
+    definition = WorkflowDefinition.model_validate(
+        {
+            "steps": [
+                {
+                    "key": "publish",
+                    "type": "tool",
+                    "tool": "capture",
+                    "input": {
+                        "run_id": "${runtime.run_id}",
+                        "step_key": "${runtime.step_key}",
+                        "operation_key": "${runtime.operation_key}",
+                    },
+                    "retry": {"max_attempts": 2, "backoff_seconds": 0},
+                }
+            ]
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Operation key", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), tools=tools).execute(
+            session,
+            run,
+            definition,
+        )
+
+    expected = {
+        "run_id": result.id,
+        "step_key": "publish",
+        "operation_key": f"{result.id}:publish",
+    }
+    assert result.status == RunStatus.completed
+    assert received == [expected, expected]
+    assert result.steps[0].input == expected
+    assert result.output == expected
 
 
 async def test_workflow_executes_explicit_dependencies_in_stable_topological_order() -> None:
@@ -76,15 +142,21 @@ async def test_workflow_executes_explicit_dependencies_in_stable_topological_ord
 
 async def test_dependency_ready_branches_execute_concurrently_and_converge() -> None:
     started: set[str] = set()
+    operation_keys: set[str] = set()
     both_started = asyncio.Event()
 
     async def branch(value: object) -> str:
-        assert isinstance(value, str)
-        started.add(value)
+        assert isinstance(value, dict)
+        label = value["label"]
+        operation_key = value["operation_key"]
+        assert isinstance(label, str)
+        assert isinstance(operation_key, str)
+        started.add(label)
+        operation_keys.add(operation_key)
         if len(started) == 2:
             both_started.set()
         await asyncio.wait_for(both_started.wait(), timeout=0.1)
-        return value.upper()
+        return label.upper()
 
     async def combine(value: object) -> str:
         assert isinstance(value, dict)
@@ -113,14 +185,20 @@ async def test_dependency_ready_branches_execute_concurrently_and_converge() -> 
                     "type": "tool",
                     "tool": "branch",
                     "depends_on": ["start"],
-                    "input": "left",
+                    "input": {
+                        "label": "left",
+                        "operation_key": "${runtime.operation_key}",
+                    },
                 },
                 {
                     "key": "right",
                     "type": "tool",
                     "tool": "branch",
                     "depends_on": ["start"],
-                    "input": "right",
+                    "input": {
+                        "label": "right",
+                        "operation_key": "${runtime.operation_key}",
+                    },
                 },
             ],
         }
@@ -146,6 +224,7 @@ async def test_dependency_ready_branches_execute_concurrently_and_converge() -> 
     assert result.status == RunStatus.completed
     assert result.output == "LEFT+RIGHT"
     assert started == {"left", "right"}
+    assert operation_keys == {f"{result.id}:left", f"{result.id}:right"}
     assert [(step.position, step.step_key) for step in result.steps] == [
         (0, "start"),
         (1, "left"),
