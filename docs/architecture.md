@@ -204,8 +204,14 @@ Each claim stores a worker ID, heartbeat timestamp, and lease deadline. A separa
 renews the lease during execution so provider calls do not block heartbeats.
 
 Before claiming new work, a worker locks expired runs in bounded batches and marks each run plus
-its incomplete steps as failed. Clearing ownership fences out the previous worker. Before persisting
-a step result, every leased worker locks the run row and verifies that its ownership and deadline
-are still valid, preventing a late result from overwriting recovery. The runtime does not replay the
-interrupted step: resumable recovery is separate because external side effects cannot be repeated
-blindly.
+its incomplete steps as failed by default. If every interrupted provider or tool step explicitly
+declares `replay_safe`, the worker instead returns the run and incomplete step records to `pending`.
+The next worker preserves completed checkpoints, reuses those step records, and increments their
+attempt counts before calling the targets again. An expired lease with no started step is also safe
+to requeue because no external call crossed the execution boundary.
+
+Clearing ownership fences out the previous worker. Before persisting a step result, every leased
+worker locks the run row and verifies that its ownership and deadline are still valid, preventing a
+late result from overwriting recovery. Replay safety is a workflow-author assertion rather than a
+property the runtime can inspect. Side-effecting steps should combine it with the stable
+`${runtime.operation_key}` and downstream idempotency enforcement.

@@ -407,6 +407,139 @@ async def test_worker_fails_expired_run_without_replaying_steps(client: AsyncCli
         assert await recover_expired_runs(session, 100, now=recovered_at) == 0
 
 
+async def test_worker_requeues_and_resumes_explicitly_replay_safe_step(
+    client: AsyncClient,
+) -> None:
+    workflow_response = await client.post(
+        "/v1/workflows",
+        json={
+            "name": "Recoverable publisher",
+            "definition": {
+                "steps": [
+                    {
+                        "key": "prepare",
+                        "type": "tool",
+                        "tool": "echo",
+                        "input": "draft",
+                    },
+                    {
+                        "key": "publish",
+                        "type": "tool",
+                        "tool": "echo",
+                        "depends_on": ["prepare"],
+                        "input": {
+                            "message": "${steps.prepare.output}",
+                            "operation_key": "${runtime.operation_key}",
+                        },
+                        "replay_safe": True,
+                    },
+                ]
+            },
+        },
+    )
+    assert workflow_response.status_code == 201
+    workflow = workflow_response.json()
+    created = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {}},
+        headers={"Prefer": "respond-async"},
+    )
+    assert created.status_code == 202
+    run_id = created.json()["id"]
+    recovered_at = datetime(2026, 10, 10, tzinfo=UTC)
+
+    async with TestSession() as session:
+        claimed = await claim_next_run(
+            session,
+            "dead-worker",
+            60,
+            now=recovered_at - timedelta(seconds=120),
+        )
+        assert claimed is not None
+        completed_step = StepRun(
+            run_id=claimed.id,
+            step_key="prepare",
+            position=0,
+            step_type="tool",
+            status=RunStatus.completed,
+            attempts=1,
+            input="draft",
+            output="draft",
+            completed_at=recovered_at - timedelta(seconds=121),
+        )
+        interrupted_step = StepRun(
+            run_id=claimed.id,
+            step_key="publish",
+            position=1,
+            step_type="tool",
+            status=RunStatus.running,
+            attempts=1,
+            input={"message": "draft", "operation_key": f"{run_id}:publish"},
+        )
+        session.add(completed_step)
+        session.add(interrupted_step)
+        await session.commit()
+
+    async with TestSession() as session:
+        assert await recover_expired_runs(session, 100, now=recovered_at) == 1
+        recovered = await session.get(WorkflowRun, run_id)
+        step = await session.get(StepRun, interrupted_step.id)
+        assert recovered is not None
+        assert step is not None
+        assert recovered.status == RunStatus.pending
+        assert recovered.error is None
+        assert recovered.completed_at is None
+        assert recovered.lease_owner is None
+        assert recovered.lease_expires_at is None
+        assert step.status == RunStatus.pending
+        assert step.attempts == 1
+        assert step.error is None
+
+    assert await run_worker_once(TestSession, Settings(app_env="test")) is True
+    completed = (await client.get(f"/v1/runs/{run_id}")).json()
+    assert completed["status"] == "completed"
+    assert completed["output"] == {
+        "message": "draft",
+        "operation_key": f"{run_id}:publish",
+    }
+    assert len(completed["steps"]) == 2
+    assert completed["steps"][0]["attempts"] == 1
+    assert completed["steps"][1]["attempts"] == 2
+    assert completed["steps"][1]["input"] == {
+        "message": "draft",
+        "operation_key": f"{run_id}:publish",
+    }
+
+
+async def test_worker_requeues_expired_claim_before_any_step_started(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    created = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {"topic": "recovery"}},
+        headers={"Prefer": "respond-async"},
+    )
+    recovered_at = datetime(2026, 10, 10, tzinfo=UTC)
+
+    async with TestSession() as session:
+        claimed = await claim_next_run(
+            session,
+            "dead-before-start",
+            60,
+            now=recovered_at - timedelta(seconds=120),
+        )
+        assert claimed is not None
+
+    async with TestSession() as session:
+        assert await recover_expired_runs(session, 100, now=recovered_at) == 1
+        recovered = await session.get(WorkflowRun, created.json()["id"])
+        assert recovered is not None
+        assert recovered.status == RunStatus.pending
+        assert recovered.lease_owner is None
+        assert recovered.lease_expires_at is None
+
+
 async def test_worker_reports_when_queue_is_empty() -> None:
     processed = await run_worker_once(TestSession, Settings(app_env="test"))
     assert processed is False
@@ -415,6 +548,27 @@ async def test_worker_reports_when_queue_is_empty() -> None:
 def test_worker_heartbeat_must_precede_lease_expiry() -> None:
     with pytest.raises(ValueError, match="heartbeat interval"):
         Settings(worker_lease_seconds=5, worker_heartbeat_seconds=5)
+
+
+async def test_approval_step_rejects_replay_safe_configuration(client: AsyncClient) -> None:
+    response = await client.post(
+        "/v1/workflows",
+        json={
+            "name": "Invalid replay policy",
+            "definition": {
+                "steps": [
+                    {
+                        "key": "review",
+                        "type": "approval",
+                        "replay_safe": True,
+                    }
+                ]
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert "replay safety" in response.text
 
 
 async def test_validation_and_not_found_responses(client: AsyncClient) -> None:

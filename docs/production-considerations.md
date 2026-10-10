@@ -24,9 +24,11 @@ v0.1 demonstrates production concerns but is not presented as a finished multi-t
 ### Queueing and recovery
 
 Deferred execution uses database-backed workers with renewable leases and heartbeats. Expired runs
-are terminalized as failed without replay, preventing them from remaining ambiguously `running`.
-Before production use, add explicit retry/resume operations according to persisted step state and
-a documented at-least-once strategy, especially for side effects.
+are terminalized as failed by default, preventing them from remaining ambiguously `running`. A step
+can opt into at-least-once recovery with `replay_safe`; the worker requeues an expired run only when
+every interrupted step carries that declaration. Completed checkpoints are preserved and attempts
+remain cumulative. This policy can repeat a call that completed remotely but was not persisted, so
+production workflows must document and test the corresponding idempotency strategy.
 
 ### DAG concurrency
 
@@ -43,6 +45,9 @@ Run creation idempotency does not make arbitrary tools idempotent. Workflow inpu
 `${runtime.operation_key}` to receive a stable `run_id:step_key` value. Pass it to a downstream
 idempotency header or unique constraint, or implement an outbox. The runtime cannot verify that a
 custom tool actually enforces the key, so interrupted side effects remain non-replayable by default.
+Setting `replay_safe` is an explicit assertion by the workflow author, not automatic proof. A false
+assertion can duplicate an external effect. Recovery does not yet persist a separate immutable event
+for every lease expiration; operators must retain worker logs and the last heartbeat for diagnosis.
 
 ### Human approvals
 

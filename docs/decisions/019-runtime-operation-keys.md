@@ -36,5 +36,5 @@ where its downstream API, database constraint, or outbox expects it.
 - Operation keys are deterministic, inspectable in resolved step input, and unique within a run.
 - LLM, tool, approval, serial, and parallel steps share one reference contract.
 - The runtime supplies identity but cannot prove downstream enforcement.
-- Automatic replay after an interrupted side effect remains disabled until the workflow has a
-  verifiable idempotency policy.
+- Replay remains disabled by default. [ADR 020](020-opt-in-replay-safe-recovery.md) adds an explicit
+  workflow-author contract for steps whose downstream idempotency policy makes replay acceptable.
