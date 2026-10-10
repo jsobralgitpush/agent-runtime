@@ -18,7 +18,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Optional workflow-wide execution time, token, and estimated cost budgets
 - Idempotent run creation under concurrent requests
 - Optional deferred execution through database workers with renewable leases
-- Conservative recovery of expired worker leases without automatic side-effect replay
+- Opt-in replay-safe recovery of expired worker leases, conservative by default
 - Latency, token, cost, input, output, and error recording per step
 - Prometheus HTTP request rate, error, latency, and in-progress metrics
 - Optional OpenTelemetry HTTP, workflow, and step traces exported over OTLP/HTTP
@@ -124,8 +124,16 @@ make worker
 The API returns `202 Accepted` with a pending run. Workers claim pending runs in creation order
 using a row lock, so multiple worker processes can poll without executing the same run. Each claim
 records a worker ID and lease deadline; the worker extends the lease with periodic heartbeats and
-releases it after the run finishes. Before claiming new work, workers mark expired runs and their
-incomplete steps as failed. They deliberately do not replay interrupted steps automatically.
+releases it after the run finishes. Before claiming new work, workers inspect expired runs. The
+default remains conservative: an interrupted step is marked failed and is not replayed.
+
+A provider or tool step may opt into recovery with `"replay_safe": true`. When every interrupted
+step in an expired run has that declaration, the worker requeues the run, preserves completed
+checkpoints, and reuses each incomplete `StepRun` with a cumulative attempt count. A step should be
+declared replay-safe only when repeating its external call is acceptable. For side effects, pass
+`${runtime.operation_key}` to a downstream idempotency header, unique constraint, or outbox and
+enforce it there. The declaration is an operator-owned contract; the runtime cannot verify the
+external system. Approval steps cannot use `replay_safe` because they wait without holding a lease.
 
 References support `${input.<key>}`, `${steps.<step-key>.output}`, and runtime context values:
 `${runtime.run_id}`, `${runtime.step_key}`, and `${runtime.operation_key}`. The operation key has the
@@ -252,7 +260,7 @@ per-million-token rates for that provider; partial rate configuration is rejecte
 
 ## Roadmap
 
-- v0.2: database workers, leases, terminal recovery, worker-backed approval continuation, and stable operation keys delivered; general interrupted-step recovery next
+- v0.2: database workers, leases, terminal and opt-in replay-safe recovery, worker-backed approval continuation, and stable operation keys delivered
 - v0.3: provider fallback plus OpenAI and Anthropic adapters delivered; encrypted credentials next
 - v0.4: dependency-aware DAG planning, bounded parallel branches, and human approval steps delivered
 - v0.5: Prometheus HTTP metrics, workflow time/token/cost budgets, OpenTelemetry traces, and a JSONL evaluation runner delivered

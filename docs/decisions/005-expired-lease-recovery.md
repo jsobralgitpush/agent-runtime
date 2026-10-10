@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR 020](020-opt-in-replay-safe-recovery.md)
 
 ## Context
 

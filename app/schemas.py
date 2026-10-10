@@ -24,6 +24,7 @@ class WorkflowStep(BaseModel):
     input: Any = None
     timeout_seconds: float | None = Field(default=None, gt=0, le=300)
     retry: RetryPolicy = Field(default_factory=RetryPolicy)
+    replay_safe: bool = False
 
     @model_validator(mode="after")
     def validate_target(self) -> "WorkflowStep":
@@ -39,10 +40,11 @@ class WorkflowStep(BaseModel):
             or self.fallback_providers
             or self.timeout_seconds is not None
             or self.retry != RetryPolicy()
+            or self.replay_safe
         ):
             raise ValueError(
                 "Approval steps cannot specify a tool, provider, fallback providers, timeout, "
-                "or custom retry policy"
+                "custom retry policy, or replay safety"
             )
         if len(self.depends_on) != len(set(self.depends_on)):
             raise ValueError("Step dependencies must not contain duplicates")

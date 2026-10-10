@@ -24,7 +24,7 @@ async def recover_expired_runs(
     *,
     now: datetime | None = None,
 ) -> int:
-    """Fail abandoned runs without replaying potentially side-effecting steps."""
+    """Requeue explicitly replay-safe work and fail every other abandoned run."""
     recovered_at = now or datetime.now(UTC)
     query = (
         select(WorkflowRun)
@@ -34,6 +34,7 @@ async def recover_expired_runs(
             WorkflowRun.lease_expires_at < recovered_at,
         )
         .order_by(WorkflowRun.lease_expires_at, WorkflowRun.id)
+        .options(selectinload(WorkflowRun.workflow), selectinload(WorkflowRun.steps))
         .with_for_update(skip_locked=True)
         .limit(batch_size)
     )
@@ -41,28 +42,60 @@ async def recover_expired_runs(
     if not runs:
         return 0
 
-    run_ids = [run.id for run in runs]
+    failed_run_ids: list[str] = []
+    requeued = 0
     for run in runs:
-        run.status = RunStatus.failed
-        run.error = LEASE_EXPIRED_ERROR
-        run.completed_at = recovered_at
+        definition = WorkflowDefinition.model_validate(run.workflow.definition)
+        step_by_key = {step.key: step for step in definition.steps}
+        incomplete_steps = [
+            step for step in run.steps if step.status in (RunStatus.pending, RunStatus.running)
+        ]
+        can_replay = all(
+            step.step_key in step_by_key and step_by_key[step.step_key].replay_safe
+            for step in incomplete_steps
+        )
         run.lease_owner = None
         run.lease_expires_at = None
+        if can_replay:
+            run.status = RunStatus.pending
+            run.error = None
+            run.completed_at = None
+            for step in incomplete_steps:
+                step.status = RunStatus.pending
+                step.output = None
+                step.error = None
+                step.started_at = None
+                step.completed_at = None
+                step.latency_ms = None
+                step.prompt_tokens = None
+                step.completion_tokens = None
+                step.estimated_cost_usd = None
+                step.provider = None
+            requeued += 1
+        else:
+            run.status = RunStatus.failed
+            run.error = LEASE_EXPIRED_ERROR
+            run.completed_at = recovered_at
+            failed_run_ids.append(run.id)
 
-    await session.execute(
-        update(StepRun)
-        .where(
-            StepRun.run_id.in_(run_ids),
-            StepRun.status.in_([RunStatus.pending, RunStatus.running]),
+    if failed_run_ids:
+        await session.execute(
+            update(StepRun)
+            .where(
+                StepRun.run_id.in_(failed_run_ids),
+                StepRun.status.in_([RunStatus.pending, RunStatus.running]),
+            )
+            .values(
+                status=RunStatus.failed,
+                error=LEASE_EXPIRED_ERROR,
+                completed_at=recovered_at,
+            )
         )
-        .values(
-            status=RunStatus.failed,
-            error=LEASE_EXPIRED_ERROR,
-            completed_at=recovered_at,
-        )
-    )
     await session.commit()
-    logger.warning("expired_workflow_runs_failed", extra={"count": len(runs)})
+    if failed_run_ids:
+        logger.warning("expired_workflow_runs_failed", extra={"count": len(failed_run_ids)})
+    if requeued:
+        logger.warning("expired_workflow_runs_requeued", extra={"count": requeued})
     return len(runs)
 
 

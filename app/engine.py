@@ -283,6 +283,11 @@ class WorkflowEngine:
             for step_run in existing_step_runs
             if step_run.status == RunStatus.completed
         }
+        incomplete_step_runs = {
+            step_run.step_key: step_run
+            for step_run in existing_step_runs
+            if step_run.status != RunStatus.completed
+        }
         outputs = {step_key: step_run.output for step_key, step_run in completed_step_runs.items()}
         consumed_tokens = sum(
             (step_run.prompt_tokens or 0) + (step_run.completion_tokens or 0)
@@ -364,14 +369,16 @@ class WorkflowEngine:
 
                 if len(batch) == 1:
                     step = batch[0]
-                    step_run = StepRun(
-                        run_id=run.id,
-                        step_key=step.key,
-                        position=position_by_key[step.key],
-                        step_type=step.type,
-                        status=RunStatus.pending,
-                    )
-                    session.add(step_run)
+                    step_run = incomplete_step_runs.get(step.key)
+                    if step_run is None:
+                        step_run = StepRun(
+                            run_id=run.id,
+                            step_key=step.key,
+                            position=position_by_key[step.key],
+                            step_type=step.type,
+                            status=RunStatus.pending,
+                        )
+                        session.add(step_run)
                     await session.flush()
                     if step.type == "approval":
                         step_run.input = resolve_references(
@@ -407,6 +414,7 @@ class WorkflowEngine:
                         batch,
                         position_by_key,
                         outputs,
+                        incomplete_step_runs,
                         lease_owner,
                         deadline,
                     )
@@ -464,6 +472,7 @@ class WorkflowEngine:
         steps: list[WorkflowStep],
         position_by_key: dict[str, int],
         outputs: dict[str, Any],
+        incomplete_step_runs: dict[str, StepRun],
         lease_owner: str | None,
         deadline: float | None,
     ) -> list[tuple[WorkflowStep, StepRun, Any]]:
@@ -471,15 +480,18 @@ class WorkflowEngine:
         resolved_inputs: list[Any] = []
         preparation_errors: dict[int, Exception] = {}
         for offset, step in enumerate(steps):
-            step_run = StepRun(
-                run_id=run.id,
-                step_key=step.key,
-                position=position_by_key[step.key],
-                step_type=step.type,
-                status=RunStatus.running,
-                started_at=datetime.now(UTC),
-            )
-            session.add(step_run)
+            step_run = incomplete_step_runs.get(step.key)
+            if step_run is None:
+                step_run = StepRun(
+                    run_id=run.id,
+                    step_key=step.key,
+                    position=position_by_key[step.key],
+                    step_type=step.type,
+                )
+                session.add(step_run)
+            step_run.status = RunStatus.running
+            step_run.error = None
+            step_run.started_at = datetime.now(UTC)
             step_runs.append(step_run)
             try:
                 resolved_input = resolve_references(
@@ -601,9 +613,10 @@ class WorkflowEngine:
         max_attempts = min(step.retry.max_attempts, self.settings.max_step_retries + 1)
         started = time.perf_counter()
         last_error: Exception | None = None
+        prior_attempts = step_run.attempts
 
         for attempt in range(1, max_attempts + 1):
-            step_run.attempts = attempt
+            step_run.attempts = prior_attempts + attempt
             if persist_state is not None:
                 await persist_state()
             try:
@@ -722,6 +735,7 @@ class WorkflowEngine:
         )
         step_run.input = resolved_input
         step_run.status = RunStatus.running
+        step_run.error = None
         step_run.started_at = datetime.now(UTC)
 
         async def verify_result() -> None:
