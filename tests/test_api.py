@@ -150,6 +150,20 @@ async def test_execute_workflow_and_record_metrics(client: AsyncClient) -> None:
     assert fetched.status_code == 200
     assert fetched.json()["output"] == run["output"]
 
+    metrics = (await client.get("/v1/metrics")).text
+    assert (
+        'agent_runtime_workflow_executions_total{mode="synchronous",status="completed"}' in metrics
+    )
+    assert (
+        "agent_runtime_workflow_execution_duration_seconds_count{"
+        'mode="synchronous",status="completed"}' in metrics
+    )
+    assert 'agent_runtime_workflow_step_attempts_total{result="success",step_type="llm"}' in metrics
+    assert (
+        'agent_runtime_workflow_step_attempts_total{result="success",step_type="tool"}' in metrics
+    )
+    assert run["id"] not in metrics
+
 
 async def test_approval_pauses_and_resumes_without_replaying_completed_steps(
     client: AsyncClient,
@@ -313,6 +327,10 @@ async def test_deferred_run_is_executed_by_worker(client: AsyncClient) -> None:
     assert fetched.json()["lease_owner"] is None
     assert fetched.json()["lease_expires_at"] is None
     assert fetched.json()["heartbeat_at"] is not None
+    metrics = (await client.get("/v1/metrics")).text
+    assert "agent_runtime_worker_claims_total" in metrics
+    assert "agent_runtime_worker_active_runs 0.0" in metrics
+    assert 'agent_runtime_workflow_executions_total{mode="worker",status="completed"}' in metrics
 
 
 async def test_worker_claims_and_renews_its_lease(client: AsyncClient) -> None:
@@ -548,6 +566,11 @@ async def test_worker_reports_when_queue_is_empty() -> None:
 def test_worker_heartbeat_must_precede_lease_expiry() -> None:
     with pytest.raises(ValueError, match="heartbeat interval"):
         Settings(worker_lease_seconds=5, worker_heartbeat_seconds=5)
+
+
+def test_worker_metrics_port_is_bounded() -> None:
+    with pytest.raises(ValueError, match="greater than or equal to 1"):
+        Settings(worker_metrics_port=0)
 
 
 async def test_approval_step_rejects_replay_safe_configuration(client: AsyncClient) -> None:

@@ -1,4 +1,6 @@
 import time
+from threading import Thread
+from wsgiref.simple_server import WSGIServer
 
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -7,6 +9,7 @@ from prometheus_client import (
     Gauge,
     Histogram,
     generate_latest,
+    start_http_server,
 )
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -36,10 +39,58 @@ http_requests_in_progress = Gauge(
     ("method",),
     registry=registry,
 )
+workflow_executions_total = Counter(
+    "agent_runtime_workflow_executions_total",
+    "Workflow engine invocations by execution mode and resulting status.",
+    ("mode", "status"),
+    registry=registry,
+)
+workflow_execution_duration_seconds = Histogram(
+    "agent_runtime_workflow_execution_duration_seconds",
+    "Workflow engine invocation duration in seconds.",
+    ("mode", "status"),
+    registry=registry,
+)
+workflow_step_attempts_total = Counter(
+    "agent_runtime_workflow_step_attempts_total",
+    "Provider and tool step attempts by step type and result.",
+    ("step_type", "result"),
+    registry=registry,
+)
+worker_claims_total = Counter(
+    "agent_runtime_worker_claims_total",
+    "Workflow runs claimed by this worker process.",
+    registry=registry,
+)
+worker_recoveries_total = Counter(
+    "agent_runtime_worker_recoveries_total",
+    "Expired workflow runs handled by recovery outcome.",
+    ("outcome",),
+    registry=registry,
+)
+worker_active_runs = Gauge(
+    "agent_runtime_worker_active_runs",
+    "Workflow runs currently executed by this worker process.",
+    registry=registry,
+)
 
 
 def render_metrics() -> bytes:
     return generate_latest(registry)
+
+
+def record_workflow_execution(mode: str, status: str, duration_seconds: float) -> None:
+    labels = {"mode": mode, "status": status}
+    workflow_executions_total.labels(**labels).inc()
+    workflow_execution_duration_seconds.labels(**labels).observe(duration_seconds)
+
+
+def record_step_attempt(step_type: str, result: str) -> None:
+    workflow_step_attempts_total.labels(step_type=step_type, result=result).inc()
+
+
+def start_worker_metrics_server(host: str, port: int) -> tuple[WSGIServer, Thread]:
+    return start_http_server(port, addr=host, registry=registry)
 
 
 class PrometheusMiddleware:

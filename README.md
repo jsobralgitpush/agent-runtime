@@ -20,7 +20,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Optional deferred execution through database workers with renewable leases
 - Opt-in replay-safe recovery of expired worker leases, conservative by default
 - Latency, token, cost, input, output, and error recording per step
-- Prometheus HTTP request rate, error, latency, and in-progress metrics
+- Prometheus HTTP, workflow execution, step attempt, and worker lifecycle metrics
 - Optional OpenTelemetry HTTP, workflow, and step traces exported over OTLP/HTTP
 - Version-controlled JSONL evaluation datasets with a CI-friendly runner
 - JSON structured logging, Docker Compose, tests, type checking, linting, and CI
@@ -61,6 +61,19 @@ The demo creates a two-step workflow (fake LLM, then uppercase tool), runs it wi
 
 Prometheus metrics are available at <http://localhost:8000/v1/metrics>. They use HTTP method,
 matched route template, and status code labels; concrete resource IDs are never used as labels.
+The same endpoint includes workflow execution counts and duration by synchronous/worker mode and
+resulting status, plus step attempts by type and result.
+
+Because workers are separate processes, configure a dedicated scrape endpoint for each worker when
+those metrics are needed:
+
+```bash
+WORKER_METRICS_HOST=127.0.0.1 WORKER_METRICS_PORT=9091 make worker
+```
+
+The worker endpoint exposes its workflow metrics together with claim, active-run, and expired-lease
+recovery counters. It is disabled when `WORKER_METRICS_PORT` is absent. Use a distinct port per
+worker and expose it beyond loopback only behind appropriate network controls.
 
 To export traces from both the API and worker, set a complete OTLP/HTTP traces endpoint and restart
 the processes:
@@ -263,7 +276,7 @@ per-million-token rates for that provider; partial rate configuration is rejecte
 - v0.2: database workers, leases, terminal and opt-in replay-safe recovery, worker-backed approval continuation, and stable operation keys delivered
 - v0.3: provider fallback plus OpenAI and Anthropic adapters delivered; encrypted credentials next
 - v0.4: dependency-aware DAG planning, bounded parallel branches, and human approval steps delivered
-- v0.5: Prometheus HTTP metrics, workflow time/token/cost budgets, OpenTelemetry traces, and a JSONL evaluation runner delivered
+- v0.5: Prometheus HTTP/workflow/worker metrics, workflow time/token/cost budgets, OpenTelemetry traces, and a JSONL evaluation runner delivered
 
 ## License
 
