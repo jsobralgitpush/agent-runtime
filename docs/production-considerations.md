@@ -12,7 +12,8 @@ v0.1 demonstrates production concerns but is not presented as a finished multi-t
 - Dependency-ready provider and tool calls can run in bounded concurrent waves.
 - Human approval gates persist review context and an approve/reject decision before resuming.
 - Each execution boundary records status, attempts, latency, output, usage, cost, and errors.
-- `/v1/metrics` exposes low-cardinality HTTP request, error, latency, and concurrency metrics.
+- `/v1/metrics` exposes low-cardinality HTTP, workflow execution, and step-attempt metrics.
+- Workers optionally expose process-local claim, active-run, recovery, workflow, and step metrics.
 - Optional OTLP/HTTP tracing correlates API requests with workflow and step execution.
 - JSONL evaluation datasets can exercise persisted workflows with exact expected outputs.
 - The container uses a non-root user.
@@ -73,15 +74,18 @@ retention controls.
 
 ### Observability
 
-HTTP RED metrics use matched route templates and exclude resource IDs and payloads. Protect the
-scrape endpoint at the network layer in production. The in-memory registry is process-local; a
-multi-process deployment needs Prometheus multiprocess mode or one scrape target per process.
+HTTP RED metrics use matched route templates and exclude resource IDs and payloads. Workflow labels
+are limited to execution mode, lifecycle status, step type, and a bounded result set. Worker labels
+contain only recovery outcomes. Protect every scrape endpoint at the network layer in production.
+The in-memory registry is process-local: configure one scrape target and distinct port per worker,
+or adopt Prometheus multiprocess mode with an explicit lifecycle and cleanup policy.
 
 OpenTelemetry HTTP, workflow, and step spans are available when an OTLP traces endpoint is set. The
 engine excludes prompts, inputs, outputs, credentials, and exception messages by design. Protect
 collector credentials, configure sampling and retention for the deployment, and review standard
-HTTP semantic attributes against the service's data policy. Add workflow/worker metrics, retry
-counts, stuck-run alerts, and provider error classification. Token and cost budgets count only usage
+HTTP semantic attributes against the service's data policy. Add queue-depth queries, stuck-run
+alerts, and provider error classification. Step-attempt counters expose retry volume, but do not
+identify individual workflows or providers. Token and cost budgets count only usage
 returned by successful provider calls and may overshoot by one response; they are workflow
 guardrails, not billing quotas. Cost rates are operator-managed configuration and must be updated
 when the selected model or provider price changes. A budget fails closed when cost is unknown, but

@@ -10,6 +10,12 @@ from sqlalchemy.orm import selectinload
 from app.config import Settings, get_settings
 from app.database import SessionLocal
 from app.engine import WorkflowEngine
+from app.metrics import (
+    start_worker_metrics_server,
+    worker_active_runs,
+    worker_claims_total,
+    worker_recoveries_total,
+)
 from app.models import RunStatus, StepRun, WorkflowRun
 from app.schemas import WorkflowDefinition
 from app.tracing import configure_tracing
@@ -94,8 +100,10 @@ async def recover_expired_runs(
     await session.commit()
     if failed_run_ids:
         logger.warning("expired_workflow_runs_failed", extra={"count": len(failed_run_ids)})
+        worker_recoveries_total.labels(outcome="failed").inc(len(failed_run_ids))
     if requeued:
         logger.warning("expired_workflow_runs_requeued", extra={"count": requeued})
+        worker_recoveries_total.labels(outcome="requeued").inc(requeued)
     return len(runs)
 
 
@@ -138,6 +146,7 @@ async def claim_next_run(
     run.heartbeat_at = claimed_at
     run.lease_expires_at = claimed_at + timedelta(seconds=lease_seconds)
     await session.commit()
+    worker_claims_total.inc()
     logger.info("workflow_run_claimed", extra={"run_id": run.id, "worker_id": worker_id})
     return run
 
@@ -207,6 +216,7 @@ async def run_worker_once(
 
         definition = WorkflowDefinition.model_validate(run.workflow.definition)
         heartbeat = asyncio.create_task(maintain_lease(session_factory, run.id, settings))
+        worker_active_runs.inc()
         try:
             await WorkflowEngine(settings).execute(
                 session,
@@ -215,6 +225,7 @@ async def run_worker_once(
                 lease_owner=settings.worker_id,
             )
         finally:
+            worker_active_runs.dec()
             heartbeat.cancel()
             with suppress(asyncio.CancelledError):
                 await heartbeat
@@ -231,9 +242,21 @@ async def run_worker() -> None:
 
 
 def main() -> None:
-    tracer_provider = configure_tracing(get_settings())
+    settings = get_settings()
+    tracer_provider = configure_tracing(settings)
+    metrics_server = None
     try:
+        if settings.worker_metrics_port is not None:
+            metrics_server = start_worker_metrics_server(
+                settings.worker_metrics_host,
+                settings.worker_metrics_port,
+            )
         asyncio.run(run_worker())
     finally:
         if tracer_provider is not None:
             tracer_provider.shutdown()
+        if metrics_server is not None:
+            server, thread = metrics_server
+            server.shutdown()
+            server.server_close()
+            thread.join()

@@ -32,5 +32,6 @@ to `OTHER` so clients cannot create arbitrary method labels.
 Operators can build request-rate, error-rate, latency, and saturation dashboards and alerts from a
 stable set of series. Metrics reset when the process restarts and represent only the scraped API
 process. Deployments with multiple processes must configure one scrape target per process or adopt
-Prometheus multiprocess mode. Workflow and worker metrics remain a separate feature because they
-need a cross-process collection strategy.
+Prometheus multiprocess mode. Workflow and worker metrics remain separate from the HTTP middleware;
+[ADR 021](021-workflow-worker-prometheus-metrics.md) adds them to the process-local registry and
+gives each worker an optional dedicated scrape endpoint.

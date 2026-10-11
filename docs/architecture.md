@@ -54,6 +54,13 @@ An ASGI middleware records Prometheus request counts, duration, and current conc
 the matched route template rather than the request path, so workflow and run IDs cannot create an
 unbounded time-series set. The scrape endpoint is excluded from its own metrics.
 
+The engine also records invocation counts and duration by execution mode and resulting status, and
+step attempts by step type and result. Worker processes add claim, active-run, and lease-recovery
+metrics to the same process-local registry. Since API and worker memory is isolated, a worker can
+optionally serve that registry on its own `WORKER_METRICS_PORT`; each process remains an independent
+Prometheus scrape target. Metrics never label workflow IDs, run IDs, step keys, worker IDs, provider
+names, prompts, outputs, or exception messages.
+
 When `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is set, FastAPI instrumentation creates HTTP server spans
 and exports them in batches over OTLP/HTTP. Synchronous `workflow.run` spans inherit that request
 context; worker runs start a new root trace. Every `workflow.step` span is a child of its run span.

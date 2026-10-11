@@ -17,6 +17,7 @@ from app.engine import (
     WorkflowTokenBudgetExceededError,
     resolve_references,
 )
+from app.metrics import workflow_step_attempts_total
 from app.models import RunStatus, Workflow, WorkflowRun
 from app.providers import LLMResult, ProviderRegistry
 from app.schemas import WorkflowDefinition
@@ -380,6 +381,10 @@ async def test_parallel_llm_wave_accounts_for_all_token_usage_before_failing() -
 
 async def test_retry_succeeds_after_transient_failure() -> None:
     attempts = 0
+    error_counter = workflow_step_attempts_total.labels(step_type="tool", result="error")
+    success_counter = workflow_step_attempts_total.labels(step_type="tool", result="success")
+    errors_before = error_counter._value.get()
+    successes_before = success_counter._value.get()
 
     async def flaky(value: object) -> object:
         nonlocal attempts
@@ -416,6 +421,8 @@ async def test_retry_succeeds_after_transient_failure() -> None:
     assert result.status == RunStatus.completed
     assert result.steps[0].attempts == 2
     assert result.steps[0].output == "ok"
+    assert error_counter._value.get() == errors_before + 1
+    assert success_counter._value.get() == successes_before + 1
 
 
 async def test_timeout_marks_step_and_run_failed() -> None:

@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
+from app.metrics import record_step_attempt, record_workflow_execution
 from app.models import RunStatus, StepRun, WorkflowRun
 from app.providers import LLMResult, ProviderRegistry, build_provider_registry
 from app.schemas import WorkflowDefinition, WorkflowStep
@@ -188,31 +189,42 @@ class WorkflowEngine:
         *,
         lease_owner: str | None = None,
     ) -> WorkflowRun:
+        started = time.perf_counter()
+        mode = "worker" if lease_owner is not None else "synchronous"
+        result_status = "error"
         attributes = {
             "agent_runtime.run.id": run.id,
             "agent_runtime.workflow.id": run.workflow_id,
-            "agent_runtime.run.mode": "worker" if lease_owner is not None else "synchronous",
+            "agent_runtime.run.mode": mode,
         }
-        with self.tracer.start_as_current_span(
-            "workflow.run",
-            attributes=attributes,
-            record_exception=False,
-            set_status_on_exception=False,
-        ) as span:
-            try:
-                result = await self._execute_workflow(
-                    session,
-                    run,
-                    definition,
-                    lease_owner=lease_owner,
-                )
-            except Exception as exc:
-                span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
-                raise
-            span.set_attribute("agent_runtime.run.status", result.status.value)
-            if result.status == RunStatus.failed:
-                span.set_status(Status(StatusCode.ERROR))
-            return result
+        try:
+            with self.tracer.start_as_current_span(
+                "workflow.run",
+                attributes=attributes,
+                record_exception=False,
+                set_status_on_exception=False,
+            ) as span:
+                try:
+                    result = await self._execute_workflow(
+                        session,
+                        run,
+                        definition,
+                        lease_owner=lease_owner,
+                    )
+                except Exception as exc:
+                    span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+                    raise
+                result_status = result.status.value
+                span.set_attribute("agent_runtime.run.status", result_status)
+                if result.status == RunStatus.failed:
+                    span.set_status(Status(StatusCode.ERROR))
+                return result
+        finally:
+            record_workflow_execution(
+                mode,
+                result_status,
+                time.perf_counter() - started,
+            )
 
     async def decide_approval(
         self,
@@ -639,10 +651,13 @@ class WorkflowEngine:
                 step_run.latency_ms = round((time.perf_counter() - started) * 1000, 3)
                 if persist_state is not None:
                     await persist_state()
+                record_step_attempt(step.type, "success")
                 return output
             except WorkerLeaseLostError:
+                record_step_attempt(step.type, "lease_lost")
                 raise
             except Exception as exc:
+                record_step_attempt(step.type, "error")
                 if (
                     isinstance(exc, TimeoutError)
                     and deadline is not None
