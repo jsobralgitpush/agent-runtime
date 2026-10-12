@@ -18,7 +18,7 @@ from app.metrics import (
 )
 from app.models import RunStatus, StepRun, WorkflowRun
 from app.schemas import WorkflowDefinition
-from app.tracing import configure_tracing
+from app.tracing import configure_tracing, use_trace_context
 
 logger = logging.getLogger(__name__)
 LEASE_EXPIRED_ERROR = "WorkerLeaseExpired: worker stopped heartbeating; automatic replay disabled"
@@ -218,12 +218,13 @@ async def run_worker_once(
         heartbeat = asyncio.create_task(maintain_lease(session_factory, run.id, settings))
         worker_active_runs.inc()
         try:
-            await WorkflowEngine(settings).execute(
-                session,
-                run,
-                definition,
-                lease_owner=settings.worker_id,
-            )
+            with use_trace_context(run.trace_context):
+                await WorkflowEngine(settings).execute(
+                    session,
+                    run,
+                    definition,
+                    lease_owner=settings.worker_id,
+                )
         finally:
             worker_active_runs.dec()
             heartbeat.cancel()

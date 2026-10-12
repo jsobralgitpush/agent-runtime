@@ -83,9 +83,12 @@ or adopt Prometheus multiprocess mode with an explicit lifecycle and cleanup pol
 OpenTelemetry HTTP, workflow, and step spans are available when an OTLP traces endpoint is set. The
 engine excludes prompts, inputs, outputs, credentials, and exception messages by design. Protect
 collector credentials, configure sampling and retention for the deployment, and review standard
-HTTP semantic attributes against the service's data policy. Add queue-depth queries, stuck-run
-alerts, and provider error classification. Step-attempt counters expose retry volume, but do not
-identify individual workflows or providers. Token and cost budgets count only usage
+HTTP semantic attributes against the service's data policy. Deferred runs persist only W3C
+`traceparent` and `tracestate`; baggage is deliberately excluded, and invalid context is ignored by
+workers. Treat trace IDs as operational metadata and apply the same database retention and access
+controls as other run metadata. Add queue-depth queries, stuck-run alerts, and provider error
+classification. Step-attempt counters expose retry volume, but do not identify individual workflows
+or providers. Token and cost budgets count only usage
 returned by successful provider calls and may overshoot by one response; they are workflow
 guardrails, not billing quotas. Cost rates are operator-managed configuration and must be updated
 when the selected model or provider price changes. A budget fails closed when cost is unknown, but

@@ -58,6 +58,7 @@ class WorkflowRun(Base):
         default=RunStatus.pending,
     )
     inputs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    trace_context: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     output: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

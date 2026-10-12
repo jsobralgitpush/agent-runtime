@@ -21,7 +21,8 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Opt-in replay-safe recovery of expired worker leases, conservative by default
 - Latency, token, cost, input, output, and error recording per step
 - Prometheus HTTP, workflow execution, step attempt, and worker lifecycle metrics
-- Optional OpenTelemetry HTTP, workflow, and step traces exported over OTLP/HTTP
+- Optional OpenTelemetry HTTP, workflow, and step traces exported over OTLP/HTTP, including
+  W3C trace continuity across deferred worker execution
 - Version-controlled JSONL evaluation datasets with a CI-friendly runner
 - JSON structured logging, Docker Compose, tests, type checking, linting, and CI
 
@@ -85,8 +86,10 @@ OTEL_SERVICE_NAME=agent-runtime
 
 Tracing is disabled when the endpoint is absent. HTTP server spans contain standard semantic
 attributes; `workflow.run` and child `workflow.step` spans add run/workflow IDs and operational
-state. Engine spans deliberately exclude inputs, prompts, outputs, credentials, and error messages.
-The OpenTelemetry SDK also honors its standard sampler and OTLP header environment variables.
+state. Deferred runs persist only `traceparent` and `tracestate`, allowing worker spans to continue
+the enqueue or approval trace after the database handoff. Engine spans deliberately exclude inputs,
+prompts, outputs, credentials, baggage, and error messages. The OpenTelemetry SDK also honors its
+standard sampler and OTLP header environment variables.
 
 ## Local development
 

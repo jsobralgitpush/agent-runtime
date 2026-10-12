@@ -244,7 +244,16 @@ async def test_rejected_approval_fails_run_without_executing_later_steps(
     }
 
 
-async def test_worker_releases_lease_and_resumes_approved_run(client: AsyncClient) -> None:
+async def test_worker_releases_lease_and_resumes_approved_run(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    enqueue_context = {"traceparent": "00-11111111111111111111111111111111-2222222222222222-01"}
+    continuation_context = {
+        "traceparent": "00-33333333333333333333333333333333-4444444444444444-01"
+    }
+    current_context = enqueue_context
+    monkeypatch.setattr("app.api.capture_trace_context", lambda: current_context)
     workflow = await create_approval_workflow(client)
     created = await client.post(
         f"/v1/workflows/{workflow['id']}/runs",
@@ -252,17 +261,24 @@ async def test_worker_releases_lease_and_resumes_approved_run(client: AsyncClien
         headers={"Prefer": "respond-async"},
     )
 
+    async with TestSession() as session:
+        queued = await session.get(WorkflowRun, created.json()["id"])
+        assert queued is not None
+        assert queued.trace_context == enqueue_context
+
     assert await run_worker_once(
         TestSession,
         Settings(app_env="test", worker_id="approval-worker"),
     )
     fetched = await client.get(f"/v1/runs/{created.json()['id']}")
     run = fetched.json()
+    assert "trace_context" not in run
     assert run["status"] == RunStatus.waiting
     assert run["lease_owner"] is None
     assert run["lease_expires_at"] is None
     assert [step["status"] for step in run["steps"]] == ["completed", "waiting"]
 
+    current_context = continuation_context
     approved = await client.post(
         f"/v1/runs/{run['id']}/approval",
         json={"decision": "approve", "comment": "Queue the continuation"},
@@ -270,10 +286,16 @@ async def test_worker_releases_lease_and_resumes_approved_run(client: AsyncClien
     )
     assert approved.status_code == 202
     assert approved.json()["status"] == RunStatus.pending
+    assert "trace_context" not in approved.json()
     assert [step["status"] for step in approved.json()["steps"]] == [
         "completed",
         "completed",
     ]
+
+    async with TestSession() as session:
+        persisted = await session.get(WorkflowRun, run["id"])
+        assert persisted is not None
+        assert persisted.trace_context == continuation_context
 
     assert await run_worker_once(
         TestSession,
