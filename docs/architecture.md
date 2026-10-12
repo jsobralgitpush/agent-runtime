@@ -63,10 +63,14 @@ names, prompts, outputs, or exception messages.
 
 When `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is set, FastAPI instrumentation creates HTTP server spans
 and exports them in batches over OTLP/HTTP. Synchronous `workflow.run` spans inherit that request
-context; worker runs start a new root trace. Every `workflow.step` span is a child of its run span.
-The engine adds identifiers, execution mode, status, step type, attempt count, and selected provider,
-but never adds inputs, prompts, outputs, credentials, or error messages. With no endpoint, the
-runtime does not install a tracer provider, exporter, or background processor.
+context. For a deferred run, the API stores only the current W3C `traceparent` and `tracestate`; the
+worker extracts that context before creating `workflow.run`, preserving the trace across the
+database queue. A deferred approval continuation replaces the stored context so it follows the
+decision request. Every `workflow.step` span is a child of its run span. The engine adds identifiers,
+execution mode, status, step type, attempt count, and selected provider, but never adds inputs,
+prompts, outputs, credentials, baggage, or error messages. Invalid or missing persisted context is
+ignored. With no endpoint, the runtime does not install a tracer provider, exporter, or background
+processor.
 
 ### Domain and persistence
 

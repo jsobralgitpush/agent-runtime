@@ -20,6 +20,7 @@ from app.schemas import (
     WorkflowDefinition,
     WorkflowRead,
 )
+from app.tracing import capture_trace_context
 
 router = APIRouter()
 Session = Annotated[AsyncSession, Depends(get_session)]
@@ -106,10 +107,12 @@ async def create_run(
         if existing:
             return existing
 
+    defer = _prefers_async(prefer)
     run = WorkflowRun(
         workflow_id=workflow_id,
         inputs=payload.inputs,
         idempotency_key=idempotency_key,
+        trace_context=capture_trace_context() if defer else None,
     )
     session.add(run)
     try:
@@ -129,7 +132,7 @@ async def create_run(
         raise
 
     await session.refresh(run)
-    if _prefers_async(prefer):
+    if defer:
         response.status_code = status.HTTP_202_ACCEPTED
         await session.refresh(run, attribute_names=["steps"])
         return run
@@ -156,6 +159,7 @@ async def decide_approval(
     response: Response,
     prefer: Annotated[str | None, Header(max_length=255)] = None,
 ) -> WorkflowRun:
+    defer = _prefers_async(prefer)
     run = await session.scalar(
         select(WorkflowRun)
         .where(WorkflowRun.id == run_id)
@@ -172,7 +176,8 @@ async def decide_approval(
             definition,
             decision=payload.decision,
             comment=payload.comment,
-            defer=_prefers_async(prefer),
+            defer=defer,
+            continuation_trace_context=capture_trace_context() if defer else None,
         )
         if result.status == RunStatus.pending:
             response.status_code = status.HTTP_202_ACCEPTED
