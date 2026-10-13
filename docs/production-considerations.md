@@ -86,9 +86,12 @@ collector credentials, configure sampling and retention for the deployment, and 
 HTTP semantic attributes against the service's data policy. Deferred runs persist only W3C
 `traceparent` and `tracestate`; baggage is deliberately excluded, and invalid context is ignored by
 workers. Treat trace IDs as operational metadata and apply the same database retention and access
-controls as other run metadata. Add queue-depth queries, stuck-run alerts, and provider error
-classification. Step-attempt counters expose retry volume, but do not identify individual workflows
-or providers. Token and cost budgets count only usage
+controls as other run metadata. Database-backed gauges expose pending queue depth and
+oldest-pending age for backlog and stuck-queue alerts. Worker copies are last observations and can
+lag by up to the poll or heartbeat interval; alert from one designated target instead of summing
+identical database views. Provider error classification remains future work. Step-attempt counters
+expose retry volume, but do not identify individual workflows or providers. Token and cost budgets
+count only usage
 returned by successful provider calls and may overshoot by one response; they are workflow
 guardrails, not billing quotas. Cost rates are operator-managed configuration and must be updated
 when the selected model or provider price changes. A budget fails closed when cost is unknown, but

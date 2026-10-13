@@ -119,6 +119,35 @@ async def test_prometheus_metrics_use_bounded_route_labels(client: AsyncClient) 
     assert "missing-run" not in response.text
     assert "not-a-real-route" not in response.text
     assert 'route="/v1/metrics"' not in response.text
+    assert "agent_runtime_queue_depth 0.0" in response.text
+    assert "agent_runtime_queue_oldest_pending_age_seconds 0.0" in response.text
+
+
+async def test_prometheus_metrics_report_database_queue_health(client: AsyncClient) -> None:
+    workflow = await create_workflow(client)
+    run_url = f"/v1/workflows/{workflow['id']}/runs"
+    first = await client.post(run_url, json={"inputs": {}}, headers={"Prefer": "respond-async"})
+    second = await client.post(run_url, json={"inputs": {}}, headers={"Prefer": "respond-async"})
+    observed_at = datetime.now(UTC)
+
+    async with TestSession() as session:
+        first_run = await session.get(WorkflowRun, first.json()["id"])
+        second_run = await session.get(WorkflowRun, second.json()["id"])
+        assert first_run is not None
+        assert second_run is not None
+        first_run.created_at = observed_at - timedelta(seconds=90)
+        second_run.created_at = observed_at - timedelta(seconds=20)
+        await session.commit()
+
+    metrics = (await client.get("/v1/metrics")).text
+    assert "agent_runtime_queue_depth 2.0" in metrics
+    age_line = next(
+        line
+        for line in metrics.splitlines()
+        if line.startswith("agent_runtime_queue_oldest_pending_age_seconds ")
+    )
+    age_seconds = float(age_line.rsplit(" ", 1)[1])
+    assert 90 <= age_seconds < 95
 
 
 async def test_create_list_and_get_workflow(client: AsyncClient) -> None:
@@ -339,7 +368,7 @@ async def test_deferred_run_is_executed_by_worker(client: AsyncClient) -> None:
 
     processed = await run_worker_once(
         TestSession,
-        Settings(app_env="test", worker_id="test-worker"),
+        Settings(app_env="test", worker_id="test-worker", worker_metrics_port=9091),
     )
 
     assert processed is True

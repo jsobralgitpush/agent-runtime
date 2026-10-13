@@ -1,4 +1,5 @@
 import time
+from datetime import UTC, datetime
 from threading import Thread
 from wsgiref.simple_server import WSGIServer
 
@@ -11,7 +12,11 @@ from prometheus_client import (
     generate_latest,
     start_http_server,
 )
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from app.models import RunStatus, WorkflowRun
 
 API_PREFIX = "/v1"
 METRICS_PATH = f"{API_PREFIX}/metrics"
@@ -73,6 +78,42 @@ worker_active_runs = Gauge(
     "Workflow runs currently executed by this worker process.",
     registry=registry,
 )
+queue_depth = Gauge(
+    "agent_runtime_queue_depth",
+    "Pending workflow runs observed in the database queue.",
+    registry=registry,
+)
+queue_oldest_pending_age_seconds = Gauge(
+    "agent_runtime_queue_oldest_pending_age_seconds",
+    "Age in seconds of the oldest pending workflow run, or zero when the queue is empty.",
+    registry=registry,
+)
+
+
+async def refresh_queue_metrics(
+    session: AsyncSession,
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Refresh database-backed queue gauges from one consistent observation."""
+    depth, oldest_created_at = (
+        await session.execute(
+            select(func.count(WorkflowRun.id), func.min(WorkflowRun.created_at)).where(
+                WorkflowRun.status == RunStatus.pending
+            )
+        )
+    ).one()
+    queue_depth.set(int(depth))
+
+    age_seconds = 0.0
+    if oldest_created_at is not None:
+        observed_at = now or datetime.now(UTC)
+        if observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=UTC)
+        if oldest_created_at.tzinfo is None:
+            oldest_created_at = oldest_created_at.replace(tzinfo=UTC)
+        age_seconds = max(0.0, (observed_at - oldest_created_at).total_seconds())
+    queue_oldest_pending_age_seconds.set(age_seconds)
 
 
 def render_metrics() -> bytes:
