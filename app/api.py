@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app.database import get_session
 from app.engine import ApprovalStateError, WorkflowEngine
-from app.metrics import METRICS_CONTENT_TYPE, render_metrics
+from app.metrics import METRICS_CONTENT_TYPE, refresh_queue_metrics, render_metrics
 from app.models import RunStatus, Workflow, WorkflowRun
 from app.schemas import (
     ApprovalDecision,
@@ -36,7 +36,8 @@ async def health() -> HealthRead:
 
 
 @router.get("/metrics", tags=["operations"], response_class=Response)
-async def metrics() -> Response:
+async def metrics(session: Session) -> Response:
+    await refresh_queue_metrics(session)
     return Response(
         content=render_metrics(),
         headers={"Content-Type": METRICS_CONTENT_TYPE},

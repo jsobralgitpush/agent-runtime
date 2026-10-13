@@ -11,6 +11,7 @@ from app.config import Settings, get_settings
 from app.database import SessionLocal
 from app.engine import WorkflowEngine
 from app.metrics import (
+    refresh_queue_metrics,
     start_worker_metrics_server,
     worker_active_runs,
     worker_claims_total,
@@ -195,6 +196,8 @@ async def maintain_lease(
                 settings.worker_id,
                 settings.worker_lease_seconds,
             )
+            if settings.worker_metrics_port is not None:
+                await refresh_queue_metrics(session)
         if not renewed:
             return
 
@@ -211,6 +214,8 @@ async def run_worker_once(
             settings.worker_id,
             settings.worker_lease_seconds,
         )
+        if settings.worker_metrics_port is not None:
+            await refresh_queue_metrics(session)
         if run is None:
             return False
 

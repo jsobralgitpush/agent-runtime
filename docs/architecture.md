@@ -58,7 +58,9 @@ The engine also records invocation counts and duration by execution mode and res
 step attempts by step type and result. Worker processes add claim, active-run, and lease-recovery
 metrics to the same process-local registry. Since API and worker memory is isolated, a worker can
 optionally serve that registry on its own `WORKER_METRICS_PORT`; each process remains an independent
-Prometheus scrape target. Metrics never label workflow IDs, run IDs, step keys, worker IDs, provider
+Prometheus scrape target. Queue depth and oldest-pending age are database-backed gauges: the API
+refreshes them on each scrape, while metrics-enabled workers refresh them after claims, idle polls,
+and active-run heartbeats. Metrics never label workflow IDs, run IDs, step keys, worker IDs, provider
 names, prompts, outputs, or exception messages.
 
 When `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is set, FastAPI instrumentation creates HTTP server spans

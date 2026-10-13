@@ -21,6 +21,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Opt-in replay-safe recovery of expired worker leases, conservative by default
 - Latency, token, cost, input, output, and error recording per step
 - Prometheus HTTP, workflow execution, step attempt, and worker lifecycle metrics
+- Database-backed queue depth and oldest-pending-age metrics
 - Optional OpenTelemetry HTTP, workflow, and step traces exported over OTLP/HTTP, including
   W3C trace continuity across deferred worker execution
 - Version-controlled JSONL evaluation datasets with a CI-friendly runner
@@ -63,7 +64,8 @@ The demo creates a two-step workflow (fake LLM, then uppercase tool), runs it wi
 Prometheus metrics are available at <http://localhost:8000/v1/metrics>. They use HTTP method,
 matched route template, and status code labels; concrete resource IDs are never used as labels.
 The same endpoint includes workflow execution counts and duration by synchronous/worker mode and
-resulting status, plus step attempts by type and result.
+resulting status, step attempts by type and result, current pending queue depth, and the age of its
+oldest run. Queue gauges are refreshed from the database for every API scrape.
 
 Because workers are separate processes, configure a dedicated scrape endpoint for each worker when
 those metrics are needed:
@@ -73,8 +75,9 @@ WORKER_METRICS_HOST=127.0.0.1 WORKER_METRICS_PORT=9091 make worker
 ```
 
 The worker endpoint exposes its workflow metrics together with claim, active-run, and expired-lease
-recovery counters. It is disabled when `WORKER_METRICS_PORT` is absent. Use a distinct port per
-worker and expose it beyond loopback only behind appropriate network controls.
+recovery counters. Queue gauges are refreshed after each claim or idle poll and on active-run
+heartbeats. It is disabled when `WORKER_METRICS_PORT` is absent. Use a distinct port per worker and
+expose it beyond loopback only behind appropriate network controls.
 
 To export traces from both the API and worker, set a complete OTLP/HTTP traces endpoint and restart
 the processes:

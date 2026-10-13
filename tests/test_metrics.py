@@ -12,6 +12,8 @@ def test_worker_metrics_server_exposes_process_registry() -> None:
         assert response.status == 200
         assert "agent_runtime_worker_claims_total" in body
         assert "agent_runtime_workflow_executions_total" in body
+        assert "agent_runtime_queue_depth" in body
+        assert "agent_runtime_queue_oldest_pending_age_seconds" in body
     finally:
         server.shutdown()
         server.server_close()
