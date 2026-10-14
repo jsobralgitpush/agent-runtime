@@ -9,7 +9,9 @@ from app.providers import (
     AnthropicProvider,
     FakeLLMProvider,
     OpenAIProvider,
+    PermanentProviderError,
     ProviderRegistry,
+    TransientProviderError,
     build_provider_registry,
 )
 from app.schemas import WorkflowDefinition
@@ -252,8 +254,34 @@ async def test_openai_provider_rejects_response_without_text() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         provider = OpenAIProvider(api_key="secret", model="model", client=client)
-        with pytest.raises(ValueError, match="did not contain output text"):
+        with pytest.raises(PermanentProviderError, match="did not contain output text"):
             await provider.complete("Hello", metadata={})
+
+
+@pytest.mark.parametrize(
+    ("status_code", "error_type", "retryable"),
+    [
+        (400, PermanentProviderError, False),
+        (429, TransientProviderError, True),
+        (503, TransientProviderError, True),
+    ],
+)
+async def test_openai_provider_classifies_http_failures(
+    status_code: int,
+    error_type: type[PermanentProviderError] | type[TransientProviderError],
+    retryable: bool,
+) -> None:
+    async def respond(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code, json={"error": {"message": "sensitive detail"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        provider = OpenAIProvider(api_key="secret", model="model", client=client)
+        with pytest.raises(error_type) as captured:
+            await provider.complete("Hello", metadata={})
+
+    assert captured.value.retryable is retryable
+    assert str(status_code) in str(captured.value)
+    assert "sensitive detail" not in str(captured.value)
 
 
 def test_openai_provider_is_registered_only_when_configured() -> None:
@@ -330,8 +358,26 @@ async def test_anthropic_provider_rejects_response_without_text() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         provider = AnthropicProvider(api_key="secret", model="model", max_tokens=512, client=client)
-        with pytest.raises(ValueError, match="did not contain output text"):
+        with pytest.raises(PermanentProviderError, match="did not contain output text"):
             await provider.complete("Hello", metadata={})
+
+
+async def test_anthropic_provider_classifies_transport_failures_as_transient() -> None:
+    async def respond(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("sensitive network detail", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        provider = AnthropicProvider(
+            api_key="secret",
+            model="model",
+            max_tokens=512,
+            client=client,
+        )
+        with pytest.raises(TransientProviderError, match="ConnectError") as captured:
+            await provider.complete("Hello", metadata={})
+
+    assert captured.value.retryable is True
+    assert "sensitive network detail" not in str(captured.value)
 
 
 def test_anthropic_provider_is_registered_only_when_configured() -> None:

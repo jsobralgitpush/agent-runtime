@@ -110,10 +110,13 @@ separate trust and cost policy.
 
 ### Provider reliability
 
-Ordered provider fallback plus OpenAI Responses and Anthropic Messages adapters are supported. Add
-circuit breakers, rate-limit-aware retry hints, request cancellation, per-provider timeout policy,
-and normalized error classes. Retry only failures known to be transient; never retry a
-non-idempotent operation blindly.
+Ordered provider fallback plus OpenAI Responses and Anthropic Messages adapters are supported.
+Built-in adapters distinguish permanent HTTP/schema failures from transient transport, throttling,
+and server failures; an all-permanent chain bypasses remaining step retries. Sanitized errors omit
+response bodies and transport messages. Add circuit breakers, `Retry-After` handling, request
+cancellation, and per-provider timeout policy. Custom providers should raise the normalized error
+classes; unknown exceptions remain retryable for backward compatibility. Never retry a
+non-idempotent tool operation blindly.
 
 ### Database operations
 

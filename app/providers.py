@@ -23,6 +23,34 @@ class LLMProvider(Protocol):
     async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult: ...
 
 
+class ProviderError(RuntimeError):
+    """Sanitized provider failure with an explicit retry classification."""
+
+    retryable: bool
+
+
+class TransientProviderError(ProviderError):
+    retryable = True
+
+
+class PermanentProviderError(ProviderError):
+    retryable = False
+
+
+_TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 409, 425, 429})
+
+
+def _raise_for_provider_status(response: httpx.Response, provider: str) -> None:
+    if response.is_success:
+        return
+    error_type = (
+        TransientProviderError
+        if response.status_code in _TRANSIENT_HTTP_STATUS_CODES or response.status_code >= 500
+        else PermanentProviderError
+    )
+    raise error_type(f"{provider} request failed with HTTP status {response.status_code}")
+
+
 def _validate_cost_rates(
     input_rate: float | None, output_rate: float | None
 ) -> tuple[float | None, float | None]:
@@ -125,14 +153,22 @@ class OpenAIProvider:
             "metadata": {key: value for key, value in metadata.items() if isinstance(value, str)},
         }
 
-        if self._client is None:
-            async with httpx.AsyncClient(timeout=None) as client:
-                response = await client.post(self._url, headers=headers, json=payload)
-        else:
-            response = await self._client.post(self._url, headers=headers, json=payload)
-        response.raise_for_status()
+        try:
+            if self._client is None:
+                async with httpx.AsyncClient(timeout=None) as client:
+                    response = await client.post(self._url, headers=headers, json=payload)
+            else:
+                response = await self._client.post(self._url, headers=headers, json=payload)
+        except httpx.RequestError as exc:
+            raise TransientProviderError(
+                f"OpenAI request failed with {type(exc).__name__}"
+            ) from exc
+        _raise_for_provider_status(response, "OpenAI")
 
-        parsed = _OpenAIResponse.model_validate(response.json())
+        try:
+            parsed = _OpenAIResponse.model_validate(response.json())
+        except ValueError as exc:
+            raise PermanentProviderError("OpenAI returned an invalid response") from exc
         output = "\n".join(
             content.text
             for item in parsed.output
@@ -140,7 +176,7 @@ class OpenAIProvider:
             if content.type == "output_text" and content.text
         )
         if not output:
-            raise ValueError("OpenAI response did not contain output text")
+            raise PermanentProviderError("OpenAI response did not contain output text")
         return LLMResult(
             output=output,
             prompt_tokens=parsed.usage.input_tokens,
@@ -207,19 +243,27 @@ class AnthropicProvider:
             "messages": [{"role": "user", "content": prompt}],
         }
 
-        if self._client is None:
-            async with httpx.AsyncClient(timeout=None) as client:
-                response = await client.post(self._url, headers=headers, json=payload)
-        else:
-            response = await self._client.post(self._url, headers=headers, json=payload)
-        response.raise_for_status()
+        try:
+            if self._client is None:
+                async with httpx.AsyncClient(timeout=None) as client:
+                    response = await client.post(self._url, headers=headers, json=payload)
+            else:
+                response = await self._client.post(self._url, headers=headers, json=payload)
+        except httpx.RequestError as exc:
+            raise TransientProviderError(
+                f"Anthropic request failed with {type(exc).__name__}"
+            ) from exc
+        _raise_for_provider_status(response, "Anthropic")
 
-        parsed = _AnthropicResponse.model_validate(response.json())
+        try:
+            parsed = _AnthropicResponse.model_validate(response.json())
+        except ValueError as exc:
+            raise PermanentProviderError("Anthropic returned an invalid response") from exc
         output = "\n".join(
             content.text for content in parsed.content if content.type == "text" and content.text
         )
         if not output:
-            raise ValueError("Anthropic response did not contain output text")
+            raise PermanentProviderError("Anthropic response did not contain output text")
         return LLMResult(
             output=output,
             prompt_tokens=parsed.usage.input_tokens,
