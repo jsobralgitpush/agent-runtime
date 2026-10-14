@@ -119,7 +119,11 @@ The provider boundary returns a normalized `LLMResult`, preventing provider resp
 LLM steps may declare an ordered fallback chain. The engine tries the primary provider followed by
 each fallback within the existing step timeout and retry boundary. Only the successful provider is
 persisted on `StepRun`; failed provider attempts emit structured logs without provider exception
-messages, reducing the chance of logging sensitive response data.
+messages, reducing the chance of logging sensitive response data. Built-in adapters normalize
+transport failures and retryable HTTP statuses (`408`, `409`, `425`, `429`, and `5xx`) as transient;
+other HTTP failures and malformed successful responses are permanent. The engine always tries the
+full fallback chain, then repeats it only when at least one failure was transient. Unknown failures
+from custom providers remain retryable for backward compatibility.
 
 When `OPENAI_API_KEY` is configured, the provider registry also exposes `openai`. Its adapter calls
 the Responses API with storage disabled, passes run and step IDs as metadata, and normalizes text and

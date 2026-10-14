@@ -19,7 +19,12 @@ from app.engine import (
 )
 from app.metrics import workflow_step_attempts_total
 from app.models import RunStatus, Workflow, WorkflowRun
-from app.providers import LLMResult, ProviderRegistry
+from app.providers import (
+    LLMResult,
+    PermanentProviderError,
+    ProviderRegistry,
+    TransientProviderError,
+)
 from app.schemas import WorkflowDefinition
 from app.tools import ToolRegistry
 from tests.conftest import TestSession
@@ -845,6 +850,96 @@ async def test_llm_step_fails_after_exhausting_provider_chain() -> None:
     assert AllProvidersFailedError.__name__ in (result.error or "")
     assert "primary, backup" in (result.error or "")
     assert result.steps[0].provider is None
+
+
+async def test_llm_step_does_not_retry_permanent_provider_failure() -> None:
+    calls = 0
+
+    class InvalidRequestProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            nonlocal calls
+            calls += 1
+            raise PermanentProviderError("invalid request")
+
+    providers = ProviderRegistry()
+    providers.register("invalid", InvalidRequestProvider())
+    definition = WorkflowDefinition.model_validate(
+        {
+            "steps": [
+                {
+                    "key": "generate",
+                    "type": "llm",
+                    "provider": "invalid",
+                    "input": "hello",
+                    "retry": {"max_attempts": 3, "backoff_seconds": 0},
+                }
+            ]
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Permanent failure", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), providers=providers).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.failed
+    assert result.steps[0].attempts == 1
+    assert calls == 1
+
+
+async def test_llm_step_retries_transient_provider_failure() -> None:
+    calls = 0
+
+    class RecoveringProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise TransientProviderError("temporarily unavailable")
+            return LLMResult(
+                output="recovered",
+                prompt_tokens=1,
+                completion_tokens=1,
+                estimated_cost_usd=0.0,
+            )
+
+    providers = ProviderRegistry()
+    providers.register("recovering", RecoveringProvider())
+    definition = WorkflowDefinition.model_validate(
+        {
+            "steps": [
+                {
+                    "key": "generate",
+                    "type": "llm",
+                    "provider": "recovering",
+                    "input": "hello",
+                    "retry": {"max_attempts": 2, "backoff_seconds": 0},
+                }
+            ]
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Transient failure", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), providers=providers).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.completed
+    assert result.output == "recovered"
+    assert result.steps[0].attempts == 2
+    assert calls == 2
 
 
 async def test_workflow_spans_are_nested_and_exclude_payloads() -> None:

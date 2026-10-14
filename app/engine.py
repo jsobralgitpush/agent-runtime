@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.metrics import record_step_attempt, record_workflow_execution
 from app.models import RunStatus, StepRun, WorkflowRun
-from app.providers import LLMResult, ProviderRegistry, build_provider_registry
+from app.providers import LLMResult, ProviderError, ProviderRegistry, build_provider_registry
 from app.schemas import WorkflowDefinition, WorkflowStep
 from app.tools import ToolRegistry
 
@@ -30,7 +30,9 @@ class WorkerLeaseLostError(RuntimeError):
 
 
 class AllProvidersFailedError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, retryable: bool) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 class WorkflowTimeBudgetExceededError(TimeoutError):
@@ -674,6 +676,8 @@ class WorkflowEngine:
                     await persist_state()
                 if isinstance(exc, WorkflowTimeBudgetExceededError):
                     break
+                if isinstance(exc, AllProvidersFailedError) and not exc.retryable:
+                    break
                 if attempt < max_attempts:
                     try:
                         await wait_for_retry(
@@ -773,6 +777,7 @@ class WorkflowEngine:
         if step.type == "llm":
             prompt = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
             provider_names = [step.provider or "fake", *step.fallback_providers]
+            retryable = False
             for provider_name in provider_names:
                 try:
                     provider = self.providers.get(provider_name)
@@ -782,6 +787,8 @@ class WorkflowEngine:
                     )
                     return replace(result, provider=provider_name)
                 except Exception as exc:
+                    failure_retryable = exc.retryable if isinstance(exc, ProviderError) else True
+                    retryable = retryable or failure_retryable
                     logger.warning(
                         "llm_provider_failed",
                         extra={
@@ -789,9 +796,13 @@ class WorkflowEngine:
                             "step_key": step.key,
                             "provider": provider_name,
                             "error_type": type(exc).__name__,
+                            "retryable": failure_retryable,
                         },
                     )
             provider_list = ", ".join(provider_names)
-            raise AllProvidersFailedError(f"All LLM providers failed: {provider_list}")
+            raise AllProvidersFailedError(
+                f"All LLM providers failed: {provider_list}",
+                retryable=retryable,
+            )
         assert step.tool is not None
         return await self.tools.get(step.tool)(value)

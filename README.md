@@ -13,6 +13,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Explicit step dependencies with bounded parallel DAG branches
 - Durable human approval gates with audited approve/reject decisions
 - Ordered LLM provider fallback with selected-provider telemetry
+- Sanitized permanent/transient provider errors with retry-aware execution
 - Deterministic local execution without API credentials
 - Exponential retry backoff and per-step timeouts
 - Optional workflow-wide execution time, token, and estimated cost budgets
@@ -263,6 +264,12 @@ environment and is never stored in a workflow or run. Set `ANTHROPIC_API_KEY` to
 `anthropic` provider; `ANTHROPIC_MODEL` defaults to `claude-sonnet-5` and
 `ANTHROPIC_MAX_TOKENS` defaults to `4096`. To record cost estimates, configure both input and output
 per-million-token rates for that provider; partial rate configuration is rejected at startup.
+
+The OpenAI and Anthropic adapters classify transport failures, HTTP `408`, `409`, `425`, `429`, and
+`5xx` responses as transient. Other HTTP failures and invalid successful responses are permanent.
+Every configured fallback is still attempted, but the engine skips later step retries when the
+entire provider chain failed permanently. Error messages contain the provider, status or exception
+class only; response bodies and network details are not persisted or logged.
 
 ## API endpoints
 
