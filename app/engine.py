@@ -30,9 +30,16 @@ class WorkerLeaseLostError(RuntimeError):
 
 
 class AllProvidersFailedError(RuntimeError):
-    def __init__(self, message: str, *, retryable: bool) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool,
+        retry_after_seconds: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.retryable = retryable
+        self.retry_after_seconds = retry_after_seconds
 
 
 class WorkflowTimeBudgetExceededError(TimeoutError):
@@ -679,10 +686,20 @@ class WorkflowEngine:
                 if isinstance(exc, AllProvidersFailedError) and not exc.retryable:
                     break
                 if attempt < max_attempts:
-                    try:
-                        await wait_for_retry(
-                            step.retry.backoff_seconds * (2 ** (attempt - 1)), deadline
+                    delay = step.retry.backoff_seconds * (2 ** (attempt - 1))
+                    if (
+                        isinstance(exc, AllProvidersFailedError)
+                        and exc.retry_after_seconds is not None
+                    ):
+                        delay = max(
+                            delay,
+                            min(
+                                exc.retry_after_seconds,
+                                self.settings.provider_retry_after_max_seconds,
+                            ),
                         )
+                    try:
+                        await wait_for_retry(delay, deadline)
                     except WorkflowTimeBudgetExceededError as budget_error:
                         last_error = budget_error
                         break
@@ -778,6 +795,7 @@ class WorkflowEngine:
             prompt = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
             provider_names = [step.provider or "fake", *step.fallback_providers]
             retryable = False
+            retry_after_seconds: float | None = None
             for provider_name in provider_names:
                 try:
                     provider = self.providers.get(provider_name)
@@ -789,6 +807,15 @@ class WorkflowEngine:
                 except Exception as exc:
                     failure_retryable = exc.retryable if isinstance(exc, ProviderError) else True
                     retryable = retryable or failure_retryable
+                    if (
+                        isinstance(exc, ProviderError)
+                        and exc.retryable
+                        and exc.retry_after_seconds is not None
+                    ):
+                        retry_after_seconds = max(
+                            retry_after_seconds or 0.0,
+                            exc.retry_after_seconds,
+                        )
                     logger.warning(
                         "llm_provider_failed",
                         extra={
@@ -803,6 +830,7 @@ class WorkflowEngine:
             raise AllProvidersFailedError(
                 f"All LLM providers failed: {provider_list}",
                 retryable=retryable,
+                retry_after_seconds=retry_after_seconds,
             )
         assert step.tool is not None
         return await self.tools.get(step.tool)(value)

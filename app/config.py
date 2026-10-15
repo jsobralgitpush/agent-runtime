@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     default_step_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     max_step_retries: int = Field(default=5, ge=0, le=10)
+    provider_retry_after_max_seconds: float = Field(default=60.0, ge=0, le=3600)
     worker_poll_interval_seconds: float = Field(default=1.0, gt=0, le=60)
     worker_id: str = Field(default_factory=_default_worker_id, min_length=1, max_length=255)
     worker_lease_seconds: int = Field(default=60, ge=5, le=3600)
