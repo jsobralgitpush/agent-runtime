@@ -893,15 +893,27 @@ async def test_llm_step_does_not_retry_permanent_provider_failure() -> None:
     assert calls == 1
 
 
-async def test_llm_step_retries_transient_provider_failure() -> None:
+async def test_llm_step_retries_transient_provider_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = 0
+    retry_delays: list[float] = []
+
+    async def record_retry_delay(delay: float, deadline: float | None) -> None:
+        assert deadline is None
+        retry_delays.append(delay)
+
+    monkeypatch.setattr("app.engine.wait_for_retry", record_retry_delay)
 
     class RecoveringProvider:
         async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
             nonlocal calls
             calls += 1
             if calls == 1:
-                raise TransientProviderError("temporarily unavailable")
+                raise TransientProviderError(
+                    "temporarily unavailable",
+                    retry_after_seconds=120,
+                )
             return LLMResult(
                 output="recovered",
                 prompt_tokens=1,
@@ -932,14 +944,51 @@ async def test_llm_step_retries_transient_provider_failure() -> None:
         run = WorkflowRun(workflow_id=workflow.id, inputs={})
         session.add(run)
         await session.commit()
-        result = await WorkflowEngine(Settings(app_env="test"), providers=providers).execute(
-            session, run, definition
-        )
+        result = await WorkflowEngine(
+            Settings(app_env="test", provider_retry_after_max_seconds=5),
+            providers=providers,
+        ).execute(session, run, definition)
 
     assert result.status == RunStatus.completed
     assert result.output == "recovered"
     assert result.steps[0].attempts == 2
     assert calls == 2
+    assert retry_delays == [5]
+
+
+async def test_provider_chain_uses_longest_retry_after_hint() -> None:
+    class ThrottledProvider:
+        def __init__(self, retry_after_seconds: float) -> None:
+            self.retry_after_seconds = retry_after_seconds
+
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            raise TransientProviderError(
+                "temporarily unavailable",
+                retry_after_seconds=self.retry_after_seconds,
+            )
+
+    providers = ProviderRegistry()
+    providers.register("primary", ThrottledProvider(3))
+    providers.register("backup", ThrottledProvider(8))
+    definition = WorkflowDefinition.model_validate(
+        {
+            "steps": [
+                {
+                    "key": "generate",
+                    "type": "llm",
+                    "provider": "primary",
+                    "fallback_providers": ["backup"],
+                    "input": "hello",
+                }
+            ]
+        }
+    )
+    engine = WorkflowEngine(Settings(app_env="test"), providers=providers)
+
+    with pytest.raises(AllProvidersFailedError) as captured:
+        await engine._dispatch(definition.steps[0], "hello", "run-1")
+
+    assert captured.value.retry_after_seconds == 8
 
 
 async def test_workflow_spans_are_nested_and_exclude_payloads() -> None:

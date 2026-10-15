@@ -1,4 +1,6 @@
 import json
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 
 import httpx
 import pytest
@@ -12,6 +14,7 @@ from app.providers import (
     PermanentProviderError,
     ProviderRegistry,
     TransientProviderError,
+    _parse_retry_after,
     build_provider_registry,
 )
 from app.schemas import WorkflowDefinition
@@ -259,20 +262,25 @@ async def test_openai_provider_rejects_response_without_text() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status_code", "error_type", "retryable"),
+    ("status_code", "error_type", "retryable", "retry_after_seconds"),
     [
-        (400, PermanentProviderError, False),
-        (429, TransientProviderError, True),
-        (503, TransientProviderError, True),
+        (400, PermanentProviderError, False, None),
+        (429, TransientProviderError, True, 17.0),
+        (503, TransientProviderError, True, 17.0),
     ],
 )
 async def test_openai_provider_classifies_http_failures(
     status_code: int,
     error_type: type[PermanentProviderError] | type[TransientProviderError],
     retryable: bool,
+    retry_after_seconds: float | None,
 ) -> None:
     async def respond(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(status_code, json={"error": {"message": "sensitive detail"}})
+        return httpx.Response(
+            status_code,
+            headers={"Retry-After": "17"},
+            json={"error": {"message": "sensitive detail"}},
+        )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         provider = OpenAIProvider(api_key="secret", model="model", client=client)
@@ -280,8 +288,25 @@ async def test_openai_provider_classifies_http_failures(
             await provider.complete("Hello", metadata={})
 
     assert captured.value.retryable is retryable
+    assert captured.value.retry_after_seconds == retry_after_seconds
     assert str(status_code) in str(captured.value)
     assert "sensitive detail" not in str(captured.value)
+
+
+def test_retry_after_parser_accepts_delay_and_http_date() -> None:
+    now = datetime(2026, 10, 15, 8, 0, tzinfo=UTC)
+
+    assert _parse_retry_after(" 17 ", now=now) == 17.0
+    assert _parse_retry_after(format_datetime(now + timedelta(seconds=30)), now=now) == 30.0
+    assert _parse_retry_after(format_datetime(now - timedelta(seconds=1)), now=now) == 0.0
+    assert _parse_retry_after("not-a-retry-date", now=now) is None
+
+
+def test_provider_retry_after_cap_must_be_bounded() -> None:
+    with pytest.raises(ValidationError, match="greater than or equal to 0"):
+        Settings(app_env="test", provider_retry_after_max_seconds=-1)
+    with pytest.raises(ValidationError, match="less than or equal to 3600"):
+        Settings(app_env="test", provider_retry_after_max_seconds=3601)
 
 
 def test_openai_provider_is_registered_only_when_configured() -> None:

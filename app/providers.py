@@ -1,6 +1,8 @@
 import hashlib
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
+from email.utils import parsedate_to_datetime
 from math import isfinite
 from typing import Any, Protocol
 
@@ -28,6 +30,15 @@ class ProviderError(RuntimeError):
 
     retryable: bool
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_after_seconds: float | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
 
 class TransientProviderError(ProviderError):
     retryable = True
@@ -40,6 +51,26 @@ class PermanentProviderError(ProviderError):
 _TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 409, 425, 429})
 
 
+def _parse_retry_after(
+    value: str | None,
+    *,
+    now: datetime | None = None,
+) -> float | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if normalized.isdigit():
+        return float(normalized)
+    try:
+        retry_at = parsedate_to_datetime(normalized)
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        observed_at = now or datetime.now(UTC)
+        return max(0.0, (retry_at.astimezone(UTC) - observed_at.astimezone(UTC)).total_seconds())
+    except (OverflowError, TypeError, ValueError):
+        return None
+
+
 def _raise_for_provider_status(response: httpx.Response, provider: str) -> None:
     if response.is_success:
         return
@@ -48,7 +79,15 @@ def _raise_for_provider_status(response: httpx.Response, provider: str) -> None:
         if response.status_code in _TRANSIENT_HTTP_STATUS_CODES or response.status_code >= 500
         else PermanentProviderError
     )
-    raise error_type(f"{provider} request failed with HTTP status {response.status_code}")
+    retry_after_seconds = (
+        _parse_retry_after(response.headers.get("Retry-After"))
+        if error_type is TransientProviderError
+        else None
+    )
+    raise error_type(
+        f"{provider} request failed with HTTP status {response.status_code}",
+        retry_after_seconds=retry_after_seconds,
+    )
 
 
 def _validate_cost_rates(

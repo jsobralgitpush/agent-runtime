@@ -123,7 +123,10 @@ messages, reducing the chance of logging sensitive response data. Built-in adapt
 transport failures and retryable HTTP statuses (`408`, `409`, `425`, `429`, and `5xx`) as transient;
 other HTTP failures and malformed successful responses are permanent. The engine always tries the
 full fallback chain, then repeats it only when at least one failure was transient. Unknown failures
-from custom providers remain retryable for backward compatibility.
+from custom providers remain retryable for backward compatibility. Transient provider errors can
+carry a parsed `Retry-After` hint. Before repeating the chain, the engine takes the largest hint,
+never shortens configured exponential backoff, and limits provider-directed waiting with
+`PROVIDER_RETRY_AFTER_MAX_SECONDS`. The workflow execution deadline remains the final bound.
 
 When `OPENAI_API_KEY` is configured, the provider registry also exposes `openai`. Its adapter calls
 the Responses API with storage disabled, passes run and step IDs as metadata, and normalizes text and

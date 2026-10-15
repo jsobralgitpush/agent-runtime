@@ -113,10 +113,14 @@ separate trust and cost policy.
 Ordered provider fallback plus OpenAI Responses and Anthropic Messages adapters are supported.
 Built-in adapters distinguish permanent HTTP/schema failures from transient transport, throttling,
 and server failures; an all-permanent chain bypasses remaining step retries. Sanitized errors omit
-response bodies and transport messages. Add circuit breakers, `Retry-After` handling, request
-cancellation, and per-provider timeout policy. Custom providers should raise the normalized error
-classes; unknown exceptions remain retryable for backward compatibility. Never retry a
-non-idempotent tool operation blindly.
+response bodies and transport messages. Valid `Retry-After` delay-seconds and HTTP dates extend the
+normal exponential backoff, using the longest hint across a failed chain. Provider-directed waits
+are capped by `PROVIDER_RETRY_AFTER_MAX_SECONDS` (60 seconds by default, at most one hour) and remain
+subject to the workflow-wide execution deadline. Size the cap for provider policy and latency SLOs;
+a value of zero disables provider-directed extension without disabling configured backoff. Add
+circuit breakers, request cancellation, and per-provider timeout policy. Custom providers should
+raise the normalized error classes; unknown exceptions remain retryable for backward compatibility.
+Never retry a non-idempotent tool operation blindly.
 
 ### Database operations
 

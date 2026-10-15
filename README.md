@@ -14,6 +14,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Durable human approval gates with audited approve/reject decisions
 - Ordered LLM provider fallback with selected-provider telemetry
 - Sanitized permanent/transient provider errors with retry-aware execution
+- Bounded provider `Retry-After` support for throttling and server cooldowns
 - Deterministic local execution without API credentials
 - Exponential retry backoff and per-step timeouts
 - Optional workflow-wide execution time, token, and estimated cost budgets
@@ -269,7 +270,11 @@ The OpenAI and Anthropic adapters classify transport failures, HTTP `408`, `409`
 `5xx` responses as transient. Other HTTP failures and invalid successful responses are permanent.
 Every configured fallback is still attempted, but the engine skips later step retries when the
 entire provider chain failed permanently. Error messages contain the provider, status or exception
-class only; response bodies and network details are not persisted or logged.
+class only; response bodies and network details are not persisted or logged. Transient responses
+may supply `Retry-After` as delay-seconds or an HTTP date. The retry loop uses the largest hint from
+the failed fallback chain without shortening its own exponential backoff, capped by
+`PROVIDER_RETRY_AFTER_MAX_SECONDS` (default `60`, maximum `3600`). Workflow-wide time budgets still
+bound the wait.
 
 ## API endpoints
 
