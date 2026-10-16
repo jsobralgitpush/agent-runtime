@@ -74,6 +74,20 @@ def test_workflow_rejects_invalid_provider_fallback_chains() -> None:
             }
         )
 
+    with pytest.raises(ValidationError, match="Tool steps cannot specify a provider timeout"):
+        WorkflowDefinition.model_validate(
+            {
+                "steps": [
+                    {
+                        "key": "publish",
+                        "type": "tool",
+                        "tool": "echo",
+                        "provider_timeout_seconds": 1,
+                    }
+                ]
+            }
+        )
+
 
 @pytest.mark.parametrize(
     ("steps", "message"),

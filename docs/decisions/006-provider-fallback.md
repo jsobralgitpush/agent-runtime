@@ -21,5 +21,5 @@ stable aggregate error containing provider names but not their exception message
 - Workflow definitions make fallback order reviewable and deterministic.
 - Step telemetry shows which provider produced the persisted output.
 - Provider exception messages are omitted from aggregate errors and structured failure logs.
-- A provider that consumes the entire step timeout prevents later fallbacks; per-provider timeout
-  allocation remains a future policy decision.
+- At acceptance time, a provider could consume the entire step timeout and prevent later fallbacks;
+  ADR 026 adds an explicit independent provider-call timeout.

@@ -117,10 +117,13 @@ response bodies and transport messages. Valid `Retry-After` delay-seconds and HT
 normal exponential backoff, using the longest hint across a failed chain. Provider-directed waits
 are capped by `PROVIDER_RETRY_AFTER_MAX_SECONDS` (60 seconds by default, at most one hour) and remain
 subject to the workflow-wide execution deadline. Size the cap for provider policy and latency SLOs;
-a value of zero disables provider-directed extension without disabling configured backoff. Add
-circuit breakers, request cancellation, and per-provider timeout policy. Custom providers should
-raise the normalized error classes; unknown exceptions remain retryable for backward compatibility.
-Never retry a non-idempotent tool operation blindly.
+a value of zero disables provider-directed extension without disabling configured backoff. Set
+`provider_timeout_seconds` on latency-sensitive LLM steps so one slow provider cannot consume
+the whole step attempt before fallbacks run. The value applies independently to every provider but
+does not extend the enclosing step or workflow deadline. Cancellation is local: a remote provider
+may already have accepted work and may still charge for it. Add circuit breakers and provider-aware
+remote cancellation. Custom providers should raise the normalized error classes; unknown exceptions
+remain retryable for backward compatibility. Never retry a non-idempotent tool operation blindly.
 
 ### Database operations
 

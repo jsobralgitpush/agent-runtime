@@ -128,6 +128,12 @@ carry a parsed `Retry-After` hint. Before repeating the chain, the engine takes 
 never shortens configured exponential backoff, and limits provider-directed waiting with
 `PROVIDER_RETRY_AFTER_MAX_SECONDS`. The workflow execution deadline remains the final bound.
 
+An LLM step can opt into `provider_timeout_seconds` to place the same independent wall-clock limit
+on every call in its provider chain. Exceeding that limit cancels the local coroutine and becomes a
+sanitized, transient `ProviderTimeoutError`, allowing fallback and step retry policies to proceed.
+The per-step attempt timeout still wraps the complete chain, and the workflow deadline still wraps
+the complete execution, so independent call limits never extend either outer budget.
+
 When `OPENAI_API_KEY` is configured, the provider registry also exposes `openai`. Its adapter calls
 the Responses API with storage disabled, passes run and step IDs as metadata, and normalizes text and
 token usage into the same `LLMResult` used by the fake provider. Credentials remain process-level

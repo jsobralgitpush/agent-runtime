@@ -44,6 +44,10 @@ class TransientProviderError(ProviderError):
     retryable = True
 
 
+class ProviderTimeoutError(TransientProviderError):
+    """A provider call exceeded its independent deadline."""
+
+
 class PermanentProviderError(ProviderError):
     retryable = False
 
