@@ -37,6 +37,7 @@ or configured step retries. If a chain mixes permanent and transient failures, r
 also calls permanently failing providers again; remembering provider-specific state across attempts
 would add complexity and remains future work.
 
-At acceptance time, this policy did not honor `Retry-After`; ADR 025 adds bounded support. Circuit
-breakers, remote request cancellation, and independent provider timeouts remain separate work.
-Custom providers gain the same behavior when they raise the normalized classes explicitly.
+At acceptance time, this policy did not honor `Retry-After` or independent provider timeouts; ADR
+025 and ADR 026 add bounded support respectively. Circuit breakers and provider-aware remote
+cancellation remain separate work. Custom providers gain the same behavior when they raise the
+normalized classes explicitly.

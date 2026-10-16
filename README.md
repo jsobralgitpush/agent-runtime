@@ -15,6 +15,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Ordered LLM provider fallback with selected-provider telemetry
 - Sanitized permanent/transient provider errors with retry-aware execution
 - Bounded provider `Retry-After` support for throttling and server cooldowns
+- Optional per-provider call timeouts that preserve fallback opportunities
 - Deterministic local execution without API credentials
 - Exponential retry backoff and per-step timeouts
 - Optional workflow-wide execution time, token, and estimated cost budgets
@@ -275,6 +276,13 @@ may supply `Retry-After` as delay-seconds or an HTTP date. The retry loop uses t
 the failed fallback chain without shortening its own exponential backoff, capped by
 `PROVIDER_RETRY_AFTER_MAX_SECONDS` (default `60`, maximum `3600`). Workflow-wide time budgets still
 bound the wait.
+
+An LLM step may set `provider_timeout_seconds` (greater than zero and at most `300`) to
+independently bound each provider call. A timed-out call is cancelled locally, classified as
+transient, and the engine continues to the next configured fallback. The step's `timeout_seconds`
+still bounds the complete provider chain for one attempt, so later fallbacks receive only the time
+remaining in that outer limit. Omitting `provider_timeout_seconds` preserves the original shared
+step-timeout behavior.
 
 ## API endpoints
 

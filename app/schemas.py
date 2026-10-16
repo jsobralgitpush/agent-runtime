@@ -23,6 +23,7 @@ class WorkflowStep(BaseModel):
     tool: str | None = None
     input: Any = None
     timeout_seconds: float | None = Field(default=None, gt=0, le=300)
+    provider_timeout_seconds: float | None = Field(default=None, gt=0, le=300)
     retry: RetryPolicy = Field(default_factory=RetryPolicy)
     replay_safe: bool = False
 
@@ -34,16 +35,19 @@ class WorkflowStep(BaseModel):
             raise ValueError("Tool steps must specify a tool")
         if self.type == "tool" and self.fallback_providers:
             raise ValueError("Tool steps cannot specify fallback providers")
+        if self.type == "tool" and self.provider_timeout_seconds is not None:
+            raise ValueError("Tool steps cannot specify a provider timeout")
         if self.type == "approval" and (
             self.tool is not None
             or self.provider is not None
             or self.fallback_providers
             or self.timeout_seconds is not None
+            or self.provider_timeout_seconds is not None
             or self.retry != RetryPolicy()
             or self.replay_safe
         ):
             raise ValueError(
-                "Approval steps cannot specify a tool, provider, fallback providers, timeout, "
+                "Approval steps cannot specify a tool, provider, fallback providers, timeouts, "
                 "custom retry policy, or replay safety"
             )
         if len(self.depends_on) != len(set(self.depends_on)):

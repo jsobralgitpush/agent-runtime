@@ -813,6 +813,114 @@ async def test_llm_step_falls_back_and_records_selected_provider() -> None:
     assert result.steps[0].attempts == 1
 
 
+async def test_provider_timeout_allows_fallback_to_run() -> None:
+    primary_cancelled = asyncio.Event()
+
+    class SlowProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                primary_cancelled.set()
+                raise
+            raise AssertionError("slow provider unexpectedly completed")
+
+    class BackupProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            return LLMResult(
+                output="backup completed",
+                prompt_tokens=1,
+                completion_tokens=1,
+                estimated_cost_usd=0.0,
+            )
+
+    providers = ProviderRegistry()
+    providers.register("slow", SlowProvider())
+    providers.register("backup", BackupProvider())
+    definition = WorkflowDefinition.model_validate(
+        {
+            "steps": [
+                {
+                    "key": "generate",
+                    "type": "llm",
+                    "provider": "slow",
+                    "fallback_providers": ["backup"],
+                    "provider_timeout_seconds": 0.01,
+                    "timeout_seconds": 1,
+                }
+            ]
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Provider timeout", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), providers=providers).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.completed
+    assert result.output == "backup completed"
+    assert result.steps[0].provider == "backup"
+    assert result.steps[0].attempts == 1
+    assert primary_cancelled.is_set()
+
+
+async def test_provider_timeout_is_retryable() -> None:
+    calls = 0
+
+    class RecoveringProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                await asyncio.Event().wait()
+            return LLMResult(
+                output="recovered",
+                prompt_tokens=1,
+                completion_tokens=1,
+                estimated_cost_usd=0.0,
+            )
+
+    providers = ProviderRegistry()
+    providers.register("recovering", RecoveringProvider())
+    definition = WorkflowDefinition.model_validate(
+        {
+            "steps": [
+                {
+                    "key": "generate",
+                    "type": "llm",
+                    "provider": "recovering",
+                    "provider_timeout_seconds": 0.01,
+                    "timeout_seconds": 1,
+                    "retry": {"max_attempts": 2, "backoff_seconds": 0},
+                }
+            ]
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Provider retry", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), providers=providers).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.completed
+    assert result.output == "recovered"
+    assert result.steps[0].provider == "recovering"
+    assert result.steps[0].attempts == 2
+    assert calls == 2
+
+
 async def test_llm_step_fails_after_exhausting_provider_chain() -> None:
     class FailingProvider:
         async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:

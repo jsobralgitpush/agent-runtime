@@ -37,5 +37,6 @@ definitions.
 
 Hints above the configured cap are deliberately shortened and may cause another request before the
 provider's requested time. The cap protects bounded execution; deployments that prefer provider
-policy over latency can raise it within the one-hour limit. Circuit breakers, provider-specific
-retry state, request cancellation, and independent per-provider timeouts remain future work.
+policy over latency can raise it within the one-hour limit. ADR 026 adds independent provider-call
+timeouts. Circuit breakers, provider-specific retry state, and provider-aware remote cancellation
+remain future work.

@@ -17,7 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.metrics import record_step_attempt, record_workflow_execution
 from app.models import RunStatus, StepRun, WorkflowRun
-from app.providers import LLMResult, ProviderError, ProviderRegistry, build_provider_registry
+from app.providers import (
+    LLMResult,
+    ProviderError,
+    ProviderRegistry,
+    ProviderTimeoutError,
+    build_provider_registry,
+)
 from app.schemas import WorkflowDefinition, WorkflowStep
 from app.tools import ToolRegistry
 
@@ -799,10 +805,22 @@ class WorkflowEngine:
             for provider_name in provider_names:
                 try:
                     provider = self.providers.get(provider_name)
-                    result = await provider.complete(
+                    completion = provider.complete(
                         prompt,
                         metadata={"run_id": run_id, "step": step.key},
                     )
+                    if step.provider_timeout_seconds is None:
+                        result = await completion
+                    else:
+                        try:
+                            result = await asyncio.wait_for(
+                                completion,
+                                timeout=step.provider_timeout_seconds,
+                            )
+                        except TimeoutError as exc:
+                            raise ProviderTimeoutError(
+                                f"{provider_name} exceeded its provider timeout"
+                            ) from exc
                     return replace(result, provider=provider_name)
                 except Exception as exc:
                     failure_retryable = exc.retryable if isinstance(exc, ProviderError) else True
