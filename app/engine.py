@@ -42,10 +42,12 @@ class AllProvidersFailedError(RuntimeError):
         *,
         retryable: bool,
         retry_after_seconds: float | None = None,
+        permanent_provider_names: frozenset[str] | None = None,
     ) -> None:
         super().__init__(message)
         self.retryable = retryable
         self.retry_after_seconds = retry_after_seconds
+        self.permanent_provider_names = permanent_provider_names or frozenset()
 
 
 class WorkflowTimeBudgetExceededError(TimeoutError):
@@ -643,6 +645,7 @@ class WorkflowEngine:
         started = time.perf_counter()
         last_error: Exception | None = None
         prior_attempts = step_run.attempts
+        permanent_provider_names: set[str] = set()
 
         for attempt in range(1, max_attempts + 1):
             step_run.attempts = prior_attempts + attempt
@@ -652,7 +655,13 @@ class WorkflowEngine:
                 remaining = remaining_time_budget(deadline)
                 attempt_timeout = min(timeout, remaining) if remaining is not None else timeout
                 result = await asyncio.wait_for(
-                    self._dispatch(step, resolved_input, run.id), timeout=attempt_timeout
+                    self._dispatch(
+                        step,
+                        resolved_input,
+                        run.id,
+                        permanent_provider_names=frozenset(permanent_provider_names),
+                    ),
+                    timeout=attempt_timeout,
                 )
                 if verify_result is not None:
                     await verify_result()
@@ -684,6 +693,8 @@ class WorkflowEngine:
                         "Workflow execution time budget exhausted"
                     )
                 last_error = exc
+                if isinstance(exc, AllProvidersFailedError):
+                    permanent_provider_names.update(exc.permanent_provider_names)
                 step_run.error = f"{type(exc).__name__}: {exc}"
                 if persist_state is not None:
                     await persist_state()
@@ -796,13 +807,32 @@ class WorkflowEngine:
             verify_result=verify_result,
         )
 
-    async def _dispatch(self, step: WorkflowStep, value: Any, run_id: str) -> Any:
+    async def _dispatch(
+        self,
+        step: WorkflowStep,
+        value: Any,
+        run_id: str,
+        *,
+        permanent_provider_names: frozenset[str] | None = None,
+    ) -> Any:
         if step.type == "llm":
             prompt = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
             provider_names = [step.provider or "fake", *step.fallback_providers]
             retryable = False
             retry_after_seconds: float | None = None
+            newly_permanent_provider_names: set[str] = set()
             for provider_name in provider_names:
+                if permanent_provider_names and provider_name in permanent_provider_names:
+                    logger.info(
+                        "llm_provider_skipped",
+                        extra={
+                            "run_id": run_id,
+                            "step_key": step.key,
+                            "provider": provider_name,
+                            "reason": "prior_permanent_failure",
+                        },
+                    )
+                    continue
                 try:
                     provider = self.providers.get(provider_name)
                     completion = provider.complete(
@@ -825,6 +855,8 @@ class WorkflowEngine:
                 except Exception as exc:
                     failure_retryable = exc.retryable if isinstance(exc, ProviderError) else True
                     retryable = retryable or failure_retryable
+                    if not failure_retryable:
+                        newly_permanent_provider_names.add(provider_name)
                     if (
                         isinstance(exc, ProviderError)
                         and exc.retryable
@@ -849,6 +881,7 @@ class WorkflowEngine:
                 f"All LLM providers failed: {provider_list}",
                 retryable=retryable,
                 retry_after_seconds=retry_after_seconds,
+                permanent_provider_names=frozenset(newly_permanent_provider_names),
             )
         assert step.tool is not None
         return await self.tools.get(step.tool)(value)

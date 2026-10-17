@@ -16,6 +16,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Sanitized permanent/transient provider errors with retry-aware execution
 - Bounded provider `Retry-After` support for throttling and server cooldowns
 - Optional per-provider call timeouts that preserve fallback opportunities
+- Retry-local memory that stops recalling permanently failed providers
 - Deterministic local execution without API credentials
 - Exponential retry backoff and per-step timeouts
 - Optional workflow-wide execution time, token, and estimated cost budgets
@@ -283,6 +284,11 @@ transient, and the engine continues to the next configured fallback. The step's 
 still bounds the complete provider chain for one attempt, so later fallbacks receive only the time
 remaining in that outer limit. Omitting `provider_timeout_seconds` preserves the original shared
 step-timeout behavior.
+
+When a fallback chain mixes permanent and transient failures, later attempts of that same step skip
+providers that already failed permanently and retry only the remaining candidates. The memory is
+scoped to one active step execution: it is not shared between runs, between steps, or persisted
+across a worker crash and replay-safe recovery.
 
 ## API endpoints
 

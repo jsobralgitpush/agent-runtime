@@ -1001,6 +1001,66 @@ async def test_llm_step_does_not_retry_permanent_provider_failure() -> None:
     assert calls == 1
 
 
+async def test_llm_step_skips_permanently_failed_provider_on_retry() -> None:
+    permanent_calls = 0
+    transient_calls = 0
+
+    class InvalidPrimaryProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            nonlocal permanent_calls
+            permanent_calls += 1
+            raise PermanentProviderError("invalid request")
+
+    class RecoveringBackupProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            nonlocal transient_calls
+            transient_calls += 1
+            if transient_calls == 1:
+                raise TransientProviderError("temporarily unavailable")
+            return LLMResult(
+                output="backup recovered",
+                prompt_tokens=1,
+                completion_tokens=1,
+                estimated_cost_usd=0.0,
+            )
+
+    providers = ProviderRegistry()
+    providers.register("invalid", InvalidPrimaryProvider())
+    providers.register("recovering", RecoveringBackupProvider())
+    definition = WorkflowDefinition.model_validate(
+        {
+            "steps": [
+                {
+                    "key": "generate",
+                    "type": "llm",
+                    "provider": "invalid",
+                    "fallback_providers": ["recovering"],
+                    "input": "hello",
+                    "retry": {"max_attempts": 2, "backoff_seconds": 0},
+                }
+            ]
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(name="Mixed failures", definition=definition.model_dump(mode="json"))
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), providers=providers).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.completed
+    assert result.output == "backup recovered"
+    assert result.steps[0].provider == "recovering"
+    assert result.steps[0].attempts == 2
+    assert permanent_calls == 1
+    assert transient_calls == 2
+
+
 async def test_llm_step_retries_transient_provider_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
