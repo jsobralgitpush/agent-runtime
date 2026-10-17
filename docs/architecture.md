@@ -134,6 +134,12 @@ sanitized, transient `ProviderTimeoutError`, allowing fallback and step retry po
 The per-step attempt timeout still wraps the complete chain, and the workflow deadline still wraps
 the complete execution, so independent call limits never extend either outer budget.
 
+The retry loop also retains permanent provider failures for the lifetime of one active step
+execution. If a mixed chain must retry because at least one failure was transient, providers that
+already returned a permanent failure are skipped on later attempts. This state is step-local and
+in-memory; independent steps, new runs, and recovered processes begin with the full configured
+chain.
+
 When `OPENAI_API_KEY` is configured, the provider registry also exposes `openai`. Its adapter calls
 the Responses API with storage disabled, passes run and step IDs as metadata, and normalizes text and
 token usage into the same `LLMResult` used by the fake provider. Credentials remain process-level

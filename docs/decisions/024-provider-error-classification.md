@@ -33,9 +33,8 @@ semantics. Treat unknown exceptions from custom providers as retryable for backw
 
 Invalid credentials and requests fail after one provider-chain attempt even when a workflow allows
 more retries. Throttling, server errors, and transport failures can still recover through fallback
-or configured step retries. If a chain mixes permanent and transient failures, retrying the chain
-also calls permanently failing providers again; remembering provider-specific state across attempts
-would add complexity and remains future work.
+or configured step retries. At acceptance time, a mixed permanent/transient chain called permanent
+failures again on every retry; ADR 027 adds step-local memory to avoid that repeated work.
 
 At acceptance time, this policy did not honor `Retry-After` or independent provider timeouts; ADR
 025 and ADR 026 add bounded support respectively. Circuit breakers and provider-aware remote

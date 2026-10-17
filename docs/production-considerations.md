@@ -125,6 +125,12 @@ may already have accepted work and may still charge for it. Add circuit breakers
 remote cancellation. Custom providers should raise the normalized error classes; unknown exceptions
 remain retryable for backward compatibility. Never retry a non-idempotent tool operation blindly.
 
+Within one active step execution, permanently failed providers are removed from later attempts of a
+mixed fallback chain. This reduces repeated authentication or validation failures without creating
+cross-run state. The memory is deliberately not durable or process-wide, so a worker restart or a
+new run probes the complete chain again. Use an external, shared circuit breaker when deployments
+need fleet-wide suppression.
+
 ### Database operations
 
 Use managed PostgreSQL, restricted application and migration roles, statement timeouts, encrypted backups, tested restores, migration compatibility checks, and indexes driven by query measurements.
