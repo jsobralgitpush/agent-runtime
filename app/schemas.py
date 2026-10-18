@@ -1,12 +1,16 @@
 import re
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models import RunStatus
 
 STEP_KEY_PATTERN = r"^[a-z][a-z0-9_-]{0,79}$"
+ProviderTimeoutSeconds = Annotated[
+    float,
+    Field(gt=0, le=300, allow_inf_nan=False),
+]
 
 
 class RetryPolicy(BaseModel):
@@ -23,7 +27,16 @@ class WorkflowStep(BaseModel):
     tool: str | None = None
     input: Any = None
     timeout_seconds: float | None = Field(default=None, gt=0, le=300)
-    provider_timeout_seconds: float | None = Field(default=None, gt=0, le=300)
+    provider_timeout_seconds: float | None = Field(
+        default=None,
+        gt=0,
+        le=300,
+        allow_inf_nan=False,
+    )
+    provider_timeout_overrides: dict[str, ProviderTimeoutSeconds] = Field(
+        default_factory=dict,
+        max_length=6,
+    )
     retry: RetryPolicy = Field(default_factory=RetryPolicy)
     replay_safe: bool = False
 
@@ -35,14 +48,17 @@ class WorkflowStep(BaseModel):
             raise ValueError("Tool steps must specify a tool")
         if self.type == "tool" and self.fallback_providers:
             raise ValueError("Tool steps cannot specify fallback providers")
-        if self.type == "tool" and self.provider_timeout_seconds is not None:
-            raise ValueError("Tool steps cannot specify a provider timeout")
+        if self.type == "tool" and (
+            self.provider_timeout_seconds is not None or self.provider_timeout_overrides
+        ):
+            raise ValueError("Tool steps cannot specify provider timeouts")
         if self.type == "approval" and (
             self.tool is not None
             or self.provider is not None
             or self.fallback_providers
             or self.timeout_seconds is not None
             or self.provider_timeout_seconds is not None
+            or self.provider_timeout_overrides
             or self.retry != RetryPolicy()
             or self.replay_safe
         ):
@@ -61,6 +77,14 @@ class WorkflowStep(BaseModel):
         provider_chain = [self.provider or "fake", *self.fallback_providers]
         if len(provider_chain) != len(set(provider_chain)):
             raise ValueError("Provider fallback chain must not contain duplicates")
+        unknown_timeout_providers = sorted(
+            set(self.provider_timeout_overrides) - set(provider_chain)
+        )
+        if unknown_timeout_providers:
+            raise ValueError(
+                "Provider timeout overrides reference providers outside the fallback chain: "
+                + ", ".join(unknown_timeout_providers)
+            )
         return self
 
 
