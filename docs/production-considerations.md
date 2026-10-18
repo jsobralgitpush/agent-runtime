@@ -121,7 +121,10 @@ a value of zero disables provider-directed extension without disabling configure
 `provider_timeout_seconds` on latency-sensitive LLM steps so one slow provider cannot consume
 the whole step attempt before fallbacks run. The value applies independently to every provider but
 does not extend the enclosing step or workflow deadline. Cancellation is local: a remote provider
-may already have accepted work and may still charge for it. Add circuit breakers and provider-aware
+may already have accepted work and may still charge for it. For heterogeneous chains, use
+`provider_timeout_overrides` to give declared providers different limits; a matching override wins
+over the shared value. Keep the enclosing step timeout large enough for the intended sequence of
+calls. Add circuit breakers and provider-aware
 remote cancellation. Custom providers should raise the normalized error classes; unknown exceptions
 remain retryable for backward compatibility. Never retry a non-idempotent tool operation blindly.
 

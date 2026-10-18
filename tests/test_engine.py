@@ -870,6 +870,68 @@ async def test_provider_timeout_allows_fallback_to_run() -> None:
     assert primary_cancelled.is_set()
 
 
+async def test_provider_timeout_override_takes_precedence() -> None:
+    primary_cancelled = asyncio.Event()
+
+    class SlowPrimaryProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                primary_cancelled.set()
+                raise
+            raise AssertionError("slow provider unexpectedly completed")
+
+    class SlowerBackupProvider:
+        async def complete(self, prompt: str, *, metadata: dict[str, Any]) -> LLMResult:
+            await asyncio.sleep(0.02)
+            return LLMResult(
+                output="backup completed with override",
+                prompt_tokens=1,
+                completion_tokens=1,
+                estimated_cost_usd=0.0,
+            )
+
+    providers = ProviderRegistry()
+    providers.register("primary", SlowPrimaryProvider())
+    providers.register("backup", SlowerBackupProvider())
+    definition = WorkflowDefinition.model_validate(
+        {
+            "steps": [
+                {
+                    "key": "generate",
+                    "type": "llm",
+                    "provider": "primary",
+                    "fallback_providers": ["backup"],
+                    "provider_timeout_seconds": 0.005,
+                    "provider_timeout_overrides": {"backup": 0.1},
+                    "timeout_seconds": 1,
+                }
+            ]
+        }
+    )
+
+    async with TestSession() as session:
+        workflow = Workflow(
+            name="Provider timeout override",
+            definition=definition.model_dump(mode="json"),
+        )
+        session.add(workflow)
+        await session.flush()
+        run = WorkflowRun(workflow_id=workflow.id, inputs={})
+        session.add(run)
+        await session.commit()
+        result = await WorkflowEngine(Settings(app_env="test"), providers=providers).execute(
+            session, run, definition
+        )
+
+    assert result.status == RunStatus.completed
+    assert result.output == "backup completed with override"
+    assert result.steps[0].provider == "backup"
+    assert result.steps[0].attempts == 1
+    assert primary_cancelled.is_set()
+
+
 async def test_provider_timeout_is_retryable() -> None:
     calls = 0
 

@@ -839,13 +839,17 @@ class WorkflowEngine:
                         prompt,
                         metadata={"run_id": run_id, "step": step.key},
                     )
-                    if step.provider_timeout_seconds is None:
+                    provider_timeout_seconds = step.provider_timeout_overrides.get(
+                        provider_name,
+                        step.provider_timeout_seconds,
+                    )
+                    if provider_timeout_seconds is None:
                         result = await completion
                     else:
                         try:
                             result = await asyncio.wait_for(
                                 completion,
-                                timeout=step.provider_timeout_seconds,
+                                timeout=provider_timeout_seconds,
                             )
                         except TimeoutError as exc:
                             raise ProviderTimeoutError(

@@ -19,7 +19,8 @@ custom providers and remains subordinate to existing step and workflow deadlines
 
 Allow LLM steps to set an optional `provider_timeout_seconds` value greater than zero and no larger
 than 300 seconds. Apply the same limit independently to each provider call in the chain. Tool and
-approval steps reject the field.
+approval steps reject the field. At acceptance, one value applied to the complete chain; ADR 028
+adds validated provider-specific overrides while retaining this value as the default.
 
 Wrap each provider completion coroutine in a local wall-clock timeout. Convert expiration into a
 sanitized `ProviderTimeoutError`, classified as transient, then continue normal fallback traversal.
@@ -36,4 +37,4 @@ coupling the engine to HTTP-client-specific connect, read, write, or pool timeou
 Local cancellation cannot prove that a remote request stopped before execution. A timed-out call
 may still complete or incur cost at the provider, and a fallback may add more cost. The setting is
 therefore opt-in and should be chosen with provider latency, billing, and the outer step deadline in
-mind. Provider-specific values, circuit breakers, and cancellation protocols remain separate work.
+mind. Circuit breakers and provider-aware cancellation protocols remain separate work.

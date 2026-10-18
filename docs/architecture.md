@@ -133,6 +133,10 @@ on every call in its provider chain. Exceeding that limit cancels the local coro
 sanitized, transient `ProviderTimeoutError`, allowing fallback and step retry policies to proceed.
 The per-step attempt timeout still wraps the complete chain, and the workflow deadline still wraps
 the complete execution, so independent call limits never extend either outer budget.
+Provider-specific values can be declared with `provider_timeout_overrides`. Override keys must name
+providers already present in that step's chain, and a matching override takes precedence over the
+shared `provider_timeout_seconds` value. Providers without an override inherit the shared value;
+when neither is configured, they remain governed only by the outer step and workflow limits.
 
 The retry loop also retains permanent provider failures for the lifetime of one active step
 execution. If a mixed chain must retry because at least one failure was transient, providers that

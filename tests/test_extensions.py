@@ -74,7 +74,7 @@ def test_workflow_rejects_invalid_provider_fallback_chains() -> None:
             }
         )
 
-    with pytest.raises(ValidationError, match="Tool steps cannot specify a provider timeout"):
+    with pytest.raises(ValidationError, match="Tool steps cannot specify provider timeouts"):
         WorkflowDefinition.model_validate(
             {
                 "steps": [
@@ -83,6 +83,35 @@ def test_workflow_rejects_invalid_provider_fallback_chains() -> None:
                         "type": "tool",
                         "tool": "echo",
                         "provider_timeout_seconds": 1,
+                    }
+                ]
+            }
+        )
+
+    with pytest.raises(ValidationError, match="outside the fallback chain: missing"):
+        WorkflowDefinition.model_validate(
+            {
+                "steps": [
+                    {
+                        "key": "generate",
+                        "type": "llm",
+                        "provider": "primary",
+                        "fallback_providers": ["backup"],
+                        "provider_timeout_overrides": {"missing": 1},
+                    }
+                ]
+            }
+        )
+
+    with pytest.raises(ValidationError, match="less than or equal to 300"):
+        WorkflowDefinition.model_validate(
+            {
+                "steps": [
+                    {
+                        "key": "generate",
+                        "type": "llm",
+                        "provider": "primary",
+                        "provider_timeout_overrides": {"primary": 301},
                     }
                 ]
             }

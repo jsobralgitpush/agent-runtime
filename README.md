@@ -16,6 +16,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Sanitized permanent/transient provider errors with retry-aware execution
 - Bounded provider `Retry-After` support for throttling and server cooldowns
 - Optional per-provider call timeouts that preserve fallback opportunities
+- Provider-specific timeout overrides for heterogeneous fallback chains
 - Retry-local memory that stops recalling permanently failed providers
 - Deterministic local execution without API credentials
 - Exponential retry backoff and per-step timeouts
@@ -284,6 +285,12 @@ transient, and the engine continues to the next configured fallback. The step's 
 still bounds the complete provider chain for one attempt, so later fallbacks receive only the time
 remaining in that outer limit. Omitting `provider_timeout_seconds` preserves the original shared
 step-timeout behavior.
+
+Use `provider_timeout_overrides` when providers in the same chain need different limits. The map
+accepts at most six entries, each key must name the primary provider or one of its fallbacks, and
+each value must be greater than zero and at most `300`. A matching override takes precedence over
+`provider_timeout_seconds`; providers without an override inherit that shared default, or rely only
+on the outer step timeout when no default is configured.
 
 When a fallback chain mixes permanent and transient failures, later attempts of that same step skip
 providers that already failed permanently and retry only the remaining candidates. The memory is
