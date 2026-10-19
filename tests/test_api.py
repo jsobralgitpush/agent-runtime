@@ -88,6 +88,19 @@ async def test_health(client: AsyncClient) -> None:
     assert response.json() == {"status": "ok"}
 
 
+async def test_provider_discovery_lists_available_names_without_configuration(
+    client: AsyncClient,
+) -> None:
+    response = await client.get("/v1/providers")
+
+    assert response.status_code == 200
+    providers = response.json()
+    names = [provider["name"] for provider in providers]
+    assert names == sorted(names)
+    assert "fake" in names
+    assert all(set(provider) == {"name"} for provider in providers)
+
+
 async def test_prometheus_metrics_use_bounded_route_labels(client: AsyncClient) -> None:
     await client.get("/v1/health")
     await client.get("/v1/runs/missing-run")
