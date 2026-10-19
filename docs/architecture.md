@@ -116,6 +116,11 @@ resource use predictable.
 
 The provider boundary returns a normalized `LLMResult`, preventing provider response shapes from leaking into the engine. The tool boundary is intentionally narrow: an async callable from JSON-compatible input to output. Registries use explicit allowlists, so workflow definitions cannot import arbitrary Python code.
 
+`GET /v1/providers` exposes the registry's sorted provider names so clients can build valid workflow
+definitions against the current runtime configuration. The response deliberately omits models,
+adapter objects, endpoints, and credentials. It is discovery rather than a health probe: a listed
+provider is configured, but the endpoint does not call its remote service.
+
 LLM steps may declare an ordered fallback chain. The engine tries the primary provider followed by
 each fallback within the existing step timeout and retry boundary. Only the successful provider is
 persisted on `StepRun`; failed provider attempts emit structured logs without provider exception

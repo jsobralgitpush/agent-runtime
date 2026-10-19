@@ -11,9 +11,11 @@ from app.database import get_session
 from app.engine import ApprovalStateError, WorkflowEngine
 from app.metrics import METRICS_CONTENT_TYPE, refresh_queue_metrics, render_metrics
 from app.models import RunStatus, Workflow, WorkflowRun
+from app.providers import build_provider_registry
 from app.schemas import (
     ApprovalDecision,
     HealthRead,
+    ProviderRead,
     RunCreate,
     RunRead,
     WorkflowCreate,
@@ -42,6 +44,12 @@ async def metrics(session: Session) -> Response:
         content=render_metrics(),
         headers={"Content-Type": METRICS_CONTENT_TYPE},
     )
+
+
+@router.get("/providers", response_model=list[ProviderRead], tags=["operations"])
+async def list_providers() -> list[ProviderRead]:
+    registry = build_provider_registry(get_settings())
+    return [ProviderRead(name=name) for name in registry.names()]
 
 
 @router.post("/workflows", response_model=WorkflowRead, status_code=status.HTTP_201_CREATED)

@@ -182,6 +182,10 @@ class WorkflowCreate(BaseModel):
     definition: WorkflowDefinition
 
 
+class ProviderRead(BaseModel):
+    name: str
+
+
 class WorkflowRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

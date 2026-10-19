@@ -335,6 +335,10 @@ class ProviderRegistry:
             raise ValueError(f"Provider already registered or invalid: {name}")
         self._providers[name] = provider
 
+    def names(self) -> tuple[str, ...]:
+        """Return configured provider names without exposing adapters or credentials."""
+        return tuple(sorted(self._providers))
+
 
 def build_provider_registry(settings: Settings) -> ProviderRegistry:
     registry = ProviderRegistry()

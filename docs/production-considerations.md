@@ -71,6 +71,8 @@ workflow data. For production, source provider credentials from a cloud secret m
 a checked-in `.env` file. Rotate keys, audit access, and add encrypted tenant-scoped credentials
 before allowing users to manage their own providers. Encrypt sensitive persisted payloads and define
 retention controls.
+Provider discovery returns names only; it does not reveal whether a key came from an environment
+variable or secret manager, and it does not validate upstream availability.
 
 ### Observability
 

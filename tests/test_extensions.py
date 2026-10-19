@@ -237,6 +237,7 @@ def test_approval_step_is_an_exclusive_dependency_ready_wave() -> None:
 
 async def test_provider_registry_and_fake_provider() -> None:
     registry = ProviderRegistry()
+    assert registry.names() == ("fake",)
     provider = registry.get("fake")
     first = await provider.complete("same prompt", metadata={})
     second = await provider.complete("same prompt", metadata={})
@@ -247,6 +248,8 @@ async def test_provider_registry_and_fake_provider() -> None:
         registry.get("missing")
     with pytest.raises(ValueError, match="already registered"):
         registry.register("fake", FakeLLMProvider())
+    registry.register("z-custom", FakeLLMProvider())
+    assert registry.names() == ("fake", "z-custom")
 
 
 async def test_openai_provider_uses_responses_api_and_normalizes_result() -> None:
@@ -364,6 +367,7 @@ def test_openai_provider_is_registered_only_when_configured() -> None:
         Settings(app_env="test", openai_api_key="test-secret", openai_model="test-model")
     )
     assert isinstance(configured.get("openai"), OpenAIProvider)
+    assert configured.names() == ("fake", "openai")
 
 
 def test_provider_cost_rates_must_be_configured_as_a_pair() -> None:
