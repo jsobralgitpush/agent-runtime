@@ -18,10 +18,12 @@ from app.schemas import (
     ProviderRead,
     RunCreate,
     RunRead,
+    ToolRead,
     WorkflowCreate,
     WorkflowDefinition,
     WorkflowRead,
 )
+from app.tools import ToolRegistry
 from app.tracing import capture_trace_context
 
 router = APIRouter()
@@ -50,6 +52,12 @@ async def metrics(session: Session) -> Response:
 async def list_providers() -> list[ProviderRead]:
     registry = build_provider_registry(get_settings())
     return [ProviderRead(name=name) for name in registry.names()]
+
+
+@router.get("/tools", response_model=list[ToolRead], tags=["operations"])
+async def list_tools() -> list[ToolRead]:
+    registry = ToolRegistry()
+    return [ToolRead(name=name) for name in registry.names()]
 
 
 @router.post("/workflows", response_model=WorkflowRead, status_code=status.HTTP_201_CREATED)

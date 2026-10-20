@@ -186,6 +186,10 @@ class ProviderRead(BaseModel):
     name: str
 
 
+class ToolRead(BaseModel):
+    name: str
+
+
 class WorkflowRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
