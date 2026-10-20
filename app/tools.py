@@ -41,3 +41,7 @@ class ToolRegistry:
         if not name or name in self._tools:
             raise ValueError(f"Tool already registered or invalid: {name}")
         self._tools[name] = tool
+
+    def names(self) -> tuple[str, ...]:
+        """Return allowlisted tool names without exposing callable objects."""
+        return tuple(sorted(self._tools))

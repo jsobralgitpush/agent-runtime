@@ -10,7 +10,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - PostgreSQL persistence with SQLAlchemy and Alembic
 - Pluggable LLM providers and tool registry
 - Optional OpenAI and Anthropic providers configured from the environment
-- Provider discovery without exposing credentials or adapter internals
+- Provider and tool discovery without exposing credentials or implementation internals
 - Explicit step dependencies with bounded parallel DAG branches
 - Durable human approval gates with audited approve/reject decisions
 - Ordered LLM provider fallback with selected-provider telemetry
@@ -305,6 +305,7 @@ across a worker crash and replay-safe recovery.
 | `GET` | `/v1/health` | Liveness check |
 | `GET` | `/v1/metrics` | Prometheus HTTP RED metrics |
 | `GET` | `/v1/providers` | List provider names available to this runtime |
+| `GET` | `/v1/tools` | List allowlisted tool names available to this runtime |
 | `POST` | `/v1/workflows` | Validate and persist a workflow |
 | `GET` | `/v1/workflows` | List workflows |
 | `GET` | `/v1/workflows/{id}` | Inspect a workflow |

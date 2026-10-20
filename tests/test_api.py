@@ -101,6 +101,17 @@ async def test_provider_discovery_lists_available_names_without_configuration(
     assert all(set(provider) == {"name"} for provider in providers)
 
 
+async def test_tool_discovery_lists_allowlisted_names_only(client: AsyncClient) -> None:
+    response = await client.get("/v1/tools")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {"name": "echo"},
+        {"name": "extract_field"},
+        {"name": "uppercase"},
+    ]
+
+
 async def test_prometheus_metrics_use_bounded_route_labels(client: AsyncClient) -> None:
     await client.get("/v1/health")
     await client.get("/v1/runs/missing-run")

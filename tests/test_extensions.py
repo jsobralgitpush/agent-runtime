@@ -38,11 +38,14 @@ async def test_builtin_tools_reject_invalid_inputs() -> None:
 
 def test_tool_registry_guards_names() -> None:
     registry = ToolRegistry()
+    assert registry.names() == ("echo", "extract_field", "uppercase")
     assert registry.get("echo") is echo
     with pytest.raises(ValueError, match="Unknown tool"):
         registry.get("missing")
     with pytest.raises(ValueError, match="already registered"):
         registry.register("echo", echo)
+    registry.register("z-custom", echo)
+    assert registry.names() == ("echo", "extract_field", "uppercase", "z-custom")
 
 
 def test_workflow_rejects_invalid_provider_fallback_chains() -> None:

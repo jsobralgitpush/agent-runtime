@@ -63,6 +63,8 @@ intentionally exclude human waiting time.
 ### Authentication and tenancy
 
 Add authentication, tenant ownership columns, row-level authorization, rate limits, payload limits, and audit events. Every query must be scoped by tenant.
+Provider and tool discovery endpoints must use that same authorization boundary in a multi-tenant
+deployment. Knowing a tool name is not permission to execute it.
 
 ### Secret handling
 
