@@ -65,6 +65,9 @@ intentionally exclude human waiting time.
 Add authentication, tenant ownership columns, row-level authorization, rate limits, payload limits, and audit events. Every query must be scoped by tenant.
 Provider and tool discovery endpoints must use that same authorization boundary in a multi-tenant
 deployment. Knowing a tool name is not permission to execute it.
+Creation-time extension validation reflects the API process only. Keep provider credentials and
+custom registry configuration consistent across API and worker processes; otherwise a workflow can
+pass preflight and still fail when a worker resolves an extension.
 
 ### Secret handling
 

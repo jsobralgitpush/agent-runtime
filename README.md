@@ -11,6 +11,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Pluggable LLM providers and tool registry
 - Optional OpenAI and Anthropic providers configured from the environment
 - Provider and tool discovery without exposing credentials or implementation internals
+- Workflow creation preflight for unknown provider and tool names
 - Explicit step dependencies with bounded parallel DAG branches
 - Durable human approval gates with audited approve/reject decisions
 - Ordered LLM provider fallback with selected-provider telemetry
@@ -269,6 +270,11 @@ environment and is never stored in a workflow or run. Set `ANTHROPIC_API_KEY` to
 `anthropic` provider; `ANTHROPIC_MODEL` defaults to `claude-sonnet-5` and
 `ANTHROPIC_MAX_TOKENS` defaults to `4096`. To record cost estimates, configure both input and output
 per-million-token rates for that provider; partial rate configuration is rejected at startup.
+
+Workflow creation validates every LLM provider, fallback provider, and tool name against the API
+process's current registries. Unknown names return `422` together in a deterministic
+`unknown_workflow_extensions` detail and the workflow is not persisted. This is configuration
+preflight, not an upstream provider health check.
 
 The OpenAI and Anthropic adapters classify transport failures, HTTP `408`, `409`, `425`, `429`, and
 `5xx` responses as transient. Other HTTP failures and invalid successful responses are permanent.

@@ -125,6 +125,12 @@ provider is configured, but the endpoint does not call its remote service.
 names only and never invokes or serializes tool callables. Discovery communicates what the runtime
 can resolve; it does not grant permission to execute a tool or validate a workflow definition.
 
+Workflow creation uses those same API-process registries as a preflight boundary. It aggregates
+unknown primary providers, fallback providers, and tools into one deterministic `422` response
+before persistence. This catches configuration errors early without contacting any provider or
+executing a tool. Workers still validate by resolution at execution time, so deployments must keep
+API and worker registry configuration aligned.
+
 LLM steps may declare an ordered fallback chain. The engine tries the primary provider followed by
 each fallback within the existing step timeout and retry boundary. Only the successful provider is
 persisted on `StepRun`; failed provider attempts emit structured logs without provider exception

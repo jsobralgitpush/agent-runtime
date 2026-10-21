@@ -34,6 +34,31 @@ def _prefers_async(value: str | None) -> bool:
     return bool(value and "respond-async" in {item.strip().lower() for item in value.split(",")})
 
 
+def _validate_workflow_extensions(definition: WorkflowDefinition) -> None:
+    provider_names = set(build_provider_registry(get_settings()).names())
+    tool_names = set(ToolRegistry().names())
+    requested_providers = {
+        provider_name
+        for step in definition.steps
+        if step.type == "llm"
+        for provider_name in (step.provider or "fake", *step.fallback_providers)
+    }
+    requested_tools = {
+        step.tool for step in definition.steps if step.type == "tool" and step.tool is not None
+    }
+    unknown_providers = sorted(requested_providers - provider_names)
+    unknown_tools = sorted(requested_tools - tool_names)
+    if unknown_providers or unknown_tools:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "unknown_workflow_extensions",
+                "unknown_providers": unknown_providers,
+                "unknown_tools": unknown_tools,
+            },
+        )
+
+
 @router.get("/health", response_model=HealthRead, tags=["operations"])
 async def health() -> HealthRead:
     return HealthRead()
@@ -62,6 +87,7 @@ async def list_tools() -> list[ToolRead]:
 
 @router.post("/workflows", response_model=WorkflowRead, status_code=status.HTTP_201_CREATED)
 async def create_workflow(payload: WorkflowCreate, session: Session) -> Workflow:
+    _validate_workflow_extensions(payload.definition)
     workflow = Workflow(
         name=payload.name,
         description=payload.description,
