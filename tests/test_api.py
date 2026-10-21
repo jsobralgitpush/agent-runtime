@@ -112,6 +112,43 @@ async def test_tool_discovery_lists_allowlisted_names_only(client: AsyncClient) 
     ]
 
 
+async def test_workflow_creation_rejects_unknown_extensions_before_persisting(
+    client: AsyncClient,
+) -> None:
+    response = await client.post(
+        "/v1/workflows",
+        json={
+            "name": "Invalid extensions",
+            "definition": {
+                "steps": [
+                    {
+                        "key": "draft",
+                        "type": "llm",
+                        "provider": "missing-primary",
+                        "fallback_providers": ["missing-fallback"],
+                    },
+                    {
+                        "key": "publish",
+                        "type": "tool",
+                        "tool": "missing-tool",
+                    },
+                ]
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": {
+            "code": "unknown_workflow_extensions",
+            "unknown_providers": ["missing-fallback", "missing-primary"],
+            "unknown_tools": ["missing-tool"],
+        }
+    }
+    workflows = await client.get("/v1/workflows")
+    assert workflows.json() == []
+
+
 async def test_prometheus_metrics_use_bounded_route_labels(client: AsyncClient) -> None:
     await client.get("/v1/health")
     await client.get("/v1/runs/missing-run")
