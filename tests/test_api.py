@@ -149,6 +149,52 @@ async def test_workflow_creation_rejects_unknown_extensions_before_persisting(
     assert workflows.json() == []
 
 
+async def test_workflow_validation_succeeds_without_persisting(client: AsyncClient) -> None:
+    response = await client.post(
+        "/v1/workflows/validate",
+        json={
+            "name": "Validated draft",
+            "definition": {
+                "steps": [
+                    {"key": "draft", "type": "llm", "provider": "fake"},
+                    {"key": "publish", "type": "tool", "tool": "uppercase"},
+                ]
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"valid": True}
+    workflows = await client.get("/v1/workflows")
+    assert workflows.json() == []
+
+
+async def test_workflow_validation_reuses_extension_preflight(client: AsyncClient) -> None:
+    response = await client.post(
+        "/v1/workflows/validate",
+        json={
+            "name": "Invalid draft",
+            "definition": {
+                "steps": [
+                    {"key": "draft", "type": "llm", "provider": "missing-provider"},
+                    {"key": "publish", "type": "tool", "tool": "missing-tool"},
+                ]
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": {
+            "code": "unknown_workflow_extensions",
+            "unknown_providers": ["missing-provider"],
+            "unknown_tools": ["missing-tool"],
+        }
+    }
+    workflows = await client.get("/v1/workflows")
+    assert workflows.json() == []
+
+
 async def test_prometheus_metrics_use_bounded_route_labels(client: AsyncClient) -> None:
     await client.get("/v1/health")
     await client.get("/v1/runs/missing-run")

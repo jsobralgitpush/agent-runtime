@@ -131,6 +131,11 @@ before persistence. This catches configuration errors early without contacting a
 executing a tool. Workers still validate by resolution at execution time, so deployments must keep
 API and worker registry configuration aligned.
 
+`POST /v1/workflows/validate` accepts the same contract as creation and applies both Pydantic
+structural checks and registry preflight without opening a database session or writing a workflow.
+Success returns only `{"valid": true}`. The endpoint never contacts providers or invokes tools, so
+it validates a definition against the API process rather than simulating its execution.
+
 LLM steps may declare an ordered fallback chain. The engine tries the primary provider followed by
 each fallback within the existing step timeout and retry boundary. Only the successful provider is
 persisted on `StepRun`; failed provider attempts emit structured logs without provider exception

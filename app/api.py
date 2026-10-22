@@ -22,6 +22,7 @@ from app.schemas import (
     WorkflowCreate,
     WorkflowDefinition,
     WorkflowRead,
+    WorkflowValidationRead,
 )
 from app.tools import ToolRegistry
 from app.tracing import capture_trace_context
@@ -83,6 +84,12 @@ async def list_providers() -> list[ProviderRead]:
 async def list_tools() -> list[ToolRead]:
     registry = ToolRegistry()
     return [ToolRead(name=name) for name in registry.names()]
+
+
+@router.post("/workflows/validate", response_model=WorkflowValidationRead)
+async def validate_workflow(payload: WorkflowCreate) -> WorkflowValidationRead:
+    _validate_workflow_extensions(payload.definition)
+    return WorkflowValidationRead()
 
 
 @router.post("/workflows", response_model=WorkflowRead, status_code=status.HTTP_201_CREATED)

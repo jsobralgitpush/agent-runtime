@@ -12,6 +12,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Optional OpenAI and Anthropic providers configured from the environment
 - Provider and tool discovery without exposing credentials or implementation internals
 - Workflow creation preflight for unknown provider and tool names
+- Side-effect-free workflow validation for authoring clients
 - Explicit step dependencies with bounded parallel DAG branches
 - Durable human approval gates with audited approve/reject decisions
 - Ordered LLM provider fallback with selected-provider telemetry
@@ -276,6 +277,10 @@ process's current registries. Unknown names return `422` together in a determini
 `unknown_workflow_extensions` detail and the workflow is not persisted. This is configuration
 preflight, not an upstream provider health check.
 
+`POST /v1/workflows/validate` applies the same structural and extension checks to the creation
+contract without persisting a workflow. A valid definition returns `{"valid": true}`. Validation
+does not contact providers, invoke tools, or execute the workflow, so it is not an execution dry-run.
+
 The OpenAI and Anthropic adapters classify transport failures, HTTP `408`, `409`, `425`, `429`, and
 `5xx` responses as transient. Other HTTP failures and invalid successful responses are permanent.
 Every configured fallback is still attempted, but the engine skips later step retries when the
@@ -312,6 +317,7 @@ across a worker crash and replay-safe recovery.
 | `GET` | `/v1/metrics` | Prometheus HTTP RED metrics |
 | `GET` | `/v1/providers` | List provider names available to this runtime |
 | `GET` | `/v1/tools` | List allowlisted tool names available to this runtime |
+| `POST` | `/v1/workflows/validate` | Validate a workflow without persisting it |
 | `POST` | `/v1/workflows` | Validate and persist a workflow |
 | `GET` | `/v1/workflows` | List workflows |
 | `GET` | `/v1/workflows/{id}` | Inspect a workflow |
