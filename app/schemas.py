@@ -182,6 +182,10 @@ class WorkflowCreate(BaseModel):
     definition: WorkflowDefinition
 
 
+class WorkflowValidationRead(BaseModel):
+    valid: Literal[True] = True
+
+
 class ProviderRead(BaseModel):
     name: str
 

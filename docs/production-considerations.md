@@ -68,6 +68,9 @@ deployment. Knowing a tool name is not permission to execute it.
 Creation-time extension validation reflects the API process only. Keep provider credentials and
 custom registry configuration consistent across API and worker processes; otherwise a workflow can
 pass preflight and still fail when a worker resolves an extension.
+The validation-only endpoint has the same registry scope and accepts the full workflow creation
+payload. Apply the same authentication, rate limits, and payload limits as workflow creation even
+though it does not persist data or execute extensions.
 
 ### Secret handling
 
