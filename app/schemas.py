@@ -253,5 +253,10 @@ class RunRead(BaseModel):
     steps: list[StepRunRead] = Field(default_factory=list)
 
 
+class WorkflowRunPage(BaseModel):
+    items: list[RunRead]
+    next_cursor: str | None = None
+
+
 class HealthRead(BaseModel):
     status: Literal["ok"] = "ok"

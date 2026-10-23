@@ -13,6 +13,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Provider and tool discovery without exposing credentials or implementation internals
 - Workflow creation preflight for unknown provider and tool names
 - Side-effect-free workflow validation for authoring clients
+- Cursor-paginated workflow run history with complete step telemetry
 - Explicit step dependencies with bounded parallel DAG branches
 - Durable human approval gates with audited approve/reject decisions
 - Ordered LLM provider fallback with selected-provider telemetry
@@ -170,6 +171,11 @@ reference occupying the entire value preserves JSON types; references embedded i
 stringified. Supplying a key does not make a tool idempotent by itself—the downstream operation must
 enforce it.
 
+Run history is available from `GET /v1/workflows/<workflow-id>/runs`. Results are ordered newest
+first and include the same step telemetry as direct run lookup. The response contains up to 20
+items by default, accepts `limit` from 1 to 100, and returns `next_cursor` when another page exists.
+Pass that opaque run ID as `cursor` on the next request; cursors are valid only for their workflow.
+
 Steps may declare `depends_on` keys and can appear in any declaration order. The runtime rejects
 unknown, duplicate, self-referential, and cyclic dependencies before persistence, then executes a
 stable topological plan using declaration order to break ties. A definition that uses dependencies
@@ -321,6 +327,7 @@ across a worker crash and replay-safe recovery.
 | `POST` | `/v1/workflows` | Validate and persist a workflow |
 | `GET` | `/v1/workflows` | List workflows |
 | `GET` | `/v1/workflows/{id}` | Inspect a workflow |
+| `GET` | `/v1/workflows/{id}/runs` | List run history with cursor pagination |
 | `POST` | `/v1/workflows/{id}/runs` | Execute a run, or enqueue it with `Prefer: respond-async` |
 | `GET` | `/v1/runs/{id}` | Inspect a run and all step telemetry |
 | `POST` | `/v1/runs/{id}/approval` | Approve or reject the run's pending human gate |

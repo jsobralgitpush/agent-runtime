@@ -266,6 +266,87 @@ async def test_create_list_and_get_workflow(client: AsyncClient) -> None:
     assert fetched.json() == created
 
 
+async def test_list_workflow_runs_uses_stable_cursor_pagination(client: AsyncClient) -> None:
+    workflow = await create_workflow(client)
+    run_url = f"/v1/workflows/{workflow['id']}/runs"
+    run_ids: list[str] = []
+    for index in range(3):
+        headers = {"Idempotency-Key": f"run-{index}"}
+        if index > 0:
+            headers["Prefer"] = "respond-async"
+        response = await client.post(
+            run_url,
+            json={"inputs": {"index": index, "topic": f"run {index}"}},
+            headers=headers,
+        )
+        assert response.status_code == (201 if index == 0 else 202)
+        run_ids.append(response.json()["id"])
+
+    observed_at = datetime.now(UTC)
+    async with TestSession() as session:
+        for index, run_id in enumerate(run_ids):
+            run = await session.get(WorkflowRun, run_id)
+            assert run is not None
+            run.created_at = observed_at - timedelta(seconds=3 - index)
+        await session.commit()
+
+    first_page = await client.get(run_url, params={"limit": 2})
+    assert first_page.status_code == 200
+    assert [item["id"] for item in first_page.json()["items"]] == [run_ids[2], run_ids[1]]
+    assert first_page.json()["next_cursor"] == run_ids[1]
+    assert all(item["steps"] == [] for item in first_page.json()["items"])
+
+    newer_run = await client.post(
+        run_url,
+        json={"inputs": {"index": 3}},
+        headers={"Prefer": "respond-async", "Idempotency-Key": "run-3"},
+    )
+    assert newer_run.status_code == 202
+
+    second_page = await client.get(
+        run_url,
+        params={"limit": 2, "cursor": first_page.json()["next_cursor"]},
+    )
+    assert second_page.status_code == 200
+    assert [item["id"] for item in second_page.json()["items"]] == [run_ids[0]]
+    assert [step["step_key"] for step in second_page.json()["items"][0]["steps"]] == [
+        "draft",
+        "publish",
+    ]
+    assert second_page.json()["next_cursor"] is None
+
+
+async def test_list_workflow_runs_rejects_foreign_cursor(client: AsyncClient) -> None:
+    first_workflow = await create_workflow(client)
+    second_workflow = await create_workflow(client)
+    second_run = await client.post(
+        f"/v1/workflows/{second_workflow['id']}/runs",
+        json={"inputs": {}},
+        headers={"Prefer": "respond-async"},
+    )
+
+    response = await client.get(
+        f"/v1/workflows/{first_workflow['id']}/runs",
+        params={"cursor": second_run.json()["id"]},
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": {"code": "invalid_run_cursor"}}
+
+    oversized_page = await client.get(
+        f"/v1/workflows/{first_workflow['id']}/runs",
+        params={"limit": 101},
+    )
+    assert oversized_page.status_code == 422
+
+
+async def test_list_workflow_runs_rejects_missing_workflow(client: AsyncClient) -> None:
+    response = await client.get("/v1/workflows/not-found/runs")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Workflow not found"}
+
+
 async def test_execute_workflow_and_record_metrics(client: AsyncClient) -> None:
     workflow = await create_workflow(client)
     response = await client.post(
