@@ -50,6 +50,12 @@ existing synchronous API remains backward compatible.
 
 `app/api.py` owns HTTP behavior only: validation, resource lookup, idempotent creation, and response serialization. It does not know provider-specific details.
 
+Workflow run history uses keyset pagination ordered by `(created_at, id)` descending. The last run
+ID in a non-final page is an opaque cursor: the API reloads that row, verifies that it belongs to
+the requested workflow, then queries strictly older rows. A composite database index on
+`(workflow_id, created_at, id)` supports the bounded query without offset scans. Each page eagerly
+loads step history so it has the same response contract as direct run lookup.
+
 An ASGI middleware records Prometheus request counts, duration, and current concurrency. Labels use
 the matched route template rather than the request path, so workflow and run IDs cannot create an
 unbounded time-series set. The scrape endpoint is excluded from its own metrics.

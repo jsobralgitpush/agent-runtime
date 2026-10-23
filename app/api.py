@@ -1,7 +1,7 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -22,6 +22,7 @@ from app.schemas import (
     WorkflowCreate,
     WorkflowDefinition,
     WorkflowRead,
+    WorkflowRunPage,
     WorkflowValidationRead,
 )
 from app.tools import ToolRegistry
@@ -126,6 +127,52 @@ async def _get_run(session: AsyncSession, run_id: str) -> WorkflowRun | None:
     )
     result: WorkflowRun | None = await session.scalar(query)
     return result
+
+
+@router.get("/workflows/{workflow_id}/runs", response_model=WorkflowRunPage)
+async def list_workflow_runs(
+    workflow_id: str,
+    session: Session,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    cursor: Annotated[str | None, Query(max_length=36)] = None,
+) -> WorkflowRunPage:
+    if await session.get(Workflow, workflow_id) is None:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    conditions = [WorkflowRun.workflow_id == workflow_id]
+    if cursor is not None:
+        cursor_run = await session.scalar(
+            select(WorkflowRun).where(
+                WorkflowRun.id == cursor,
+                WorkflowRun.workflow_id == workflow_id,
+            )
+        )
+        if cursor_run is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={"code": "invalid_run_cursor"},
+            )
+        conditions.append(
+            or_(
+                WorkflowRun.created_at < cursor_run.created_at,
+                and_(
+                    WorkflowRun.created_at == cursor_run.created_at,
+                    WorkflowRun.id < cursor_run.id,
+                ),
+            )
+        )
+
+    query = (
+        select(WorkflowRun)
+        .where(*conditions)
+        .options(selectinload(WorkflowRun.steps))
+        .order_by(WorkflowRun.created_at.desc(), WorkflowRun.id.desc())
+        .limit(limit + 1)
+    )
+    runs = list(await session.scalars(query))
+    items = runs[:limit]
+    next_cursor = items[-1].id if len(runs) > limit else None
+    return WorkflowRunPage(items=items, next_cursor=next_cursor)
 
 
 @router.post(
