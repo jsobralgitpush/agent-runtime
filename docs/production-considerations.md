@@ -66,6 +66,9 @@ Add authentication, tenant ownership columns, row-level authorization, rate limi
 Run-history cursors are run IDs, not authorization capabilities. Validate workflow and cursor
 ownership inside the tenant boundary, retain the 100-item page limit, and define retention or
 archival before histories grow without bound.
+Status-filtered pages are not a database snapshot: runs can change lifecycle state between requests.
+Clients should keep the filter unchanged while following cursors and refresh from the first page
+when they need a current operational view.
 Provider and tool discovery endpoints must use that same authorization boundary in a multi-tenant
 deployment. Knowing a tool name is not permission to execute it.
 Creation-time extension validation reflects the API process only. Keep provider credentials and

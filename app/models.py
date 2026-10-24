@@ -49,6 +49,13 @@ class WorkflowRun(Base):
         UniqueConstraint("workflow_id", "idempotency_key"),
         Index("ix_workflow_runs_status_lease_expires_at", "status", "lease_expires_at"),
         Index("ix_workflow_runs_workflow_created_id", "workflow_id", "created_at", "id"),
+        Index(
+            "ix_workflow_runs_workflow_status_created_id",
+            "workflow_id",
+            "status",
+            "created_at",
+            "id",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))

@@ -135,11 +135,14 @@ async def list_workflow_runs(
     session: Session,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     cursor: Annotated[str | None, Query(max_length=36)] = None,
+    run_status: Annotated[RunStatus | None, Query(alias="status")] = None,
 ) -> WorkflowRunPage:
     if await session.get(Workflow, workflow_id) is None:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
     conditions = [WorkflowRun.workflow_id == workflow_id]
+    if run_status is not None:
+        conditions.append(WorkflowRun.status == run_status)
     if cursor is not None:
         cursor_run = await session.scalar(
             select(WorkflowRun).where(
