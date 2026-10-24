@@ -347,6 +347,70 @@ async def test_list_workflow_runs_rejects_missing_workflow(client: AsyncClient) 
     assert response.json() == {"detail": "Workflow not found"}
 
 
+async def test_list_workflow_runs_filters_status_with_cursor_pagination(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    run_url = f"/v1/workflows/{workflow['id']}/runs"
+    completed = await client.post(
+        run_url,
+        json={"inputs": {"topic": "completed"}},
+        headers={"Idempotency-Key": "completed"},
+    )
+    pending_runs = [
+        await client.post(
+            run_url,
+            json={"inputs": {"topic": f"pending {index}"}},
+            headers={"Prefer": "respond-async", "Idempotency-Key": f"pending-{index}"},
+        )
+        for index in range(2)
+    ]
+    assert completed.status_code == 201
+    assert all(response.status_code == 202 for response in pending_runs)
+
+    observed_at = datetime.now(UTC)
+    ordered_ids = [completed.json()["id"], *(response.json()["id"] for response in pending_runs)]
+    async with TestSession() as session:
+        for index, run_id in enumerate(ordered_ids):
+            run = await session.get(WorkflowRun, run_id)
+            assert run is not None
+            run.created_at = observed_at - timedelta(seconds=3 - index)
+        await session.commit()
+
+    completed_page = await client.get(run_url, params={"status": "completed"})
+    assert completed_page.status_code == 200
+    assert [item["id"] for item in completed_page.json()["items"]] == [ordered_ids[0]]
+
+    first_pending_page = await client.get(
+        run_url,
+        params={"status": "pending", "limit": 1},
+    )
+    assert first_pending_page.status_code == 200
+    assert [item["id"] for item in first_pending_page.json()["items"]] == [ordered_ids[2]]
+    assert first_pending_page.json()["next_cursor"] == ordered_ids[2]
+
+    async with TestSession() as session:
+        cursor_run = await session.get(WorkflowRun, ordered_ids[2])
+        assert cursor_run is not None
+        cursor_run.status = RunStatus.running
+        await session.commit()
+
+    second_pending_page = await client.get(
+        run_url,
+        params={
+            "status": "pending",
+            "limit": 1,
+            "cursor": first_pending_page.json()["next_cursor"],
+        },
+    )
+    assert second_pending_page.status_code == 200
+    assert [item["id"] for item in second_pending_page.json()["items"]] == [ordered_ids[1]]
+    assert second_pending_page.json()["next_cursor"] is None
+
+    invalid_status = await client.get(run_url, params={"status": "unknown"})
+    assert invalid_status.status_code == 422
+
+
 async def test_execute_workflow_and_record_metrics(client: AsyncClient) -> None:
     workflow = await create_workflow(client)
     response = await client.post(

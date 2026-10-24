@@ -55,6 +55,10 @@ ID in a non-final page is an opaque cursor: the API reloads that row, verifies t
 the requested workflow, then queries strictly older rows. A composite database index on
 `(workflow_id, created_at, id)` supports the bounded query without offset scans. Each page eagerly
 loads step history so it has the same response contract as direct run lookup.
+An optional exact lifecycle-status filter is applied before the keyset boundary. The unfiltered
+query uses `(workflow_id, created_at, id)`, while filtered history uses the covering prefix
+`(workflow_id, status, created_at, id)`. The cursor itself remains a workflow-scoped ordering
+boundary rather than encoding mutable status, so a run transition cannot make its cursor unreadable.
 
 An ASGI middleware records Prometheus request counts, duration, and current concurrency. Labels use
 the matched route template rather than the request path, so workflow and run IDs cannot create an

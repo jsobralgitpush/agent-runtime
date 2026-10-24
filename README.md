@@ -175,6 +175,9 @@ Run history is available from `GET /v1/workflows/<workflow-id>/runs`. Results ar
 first and include the same step telemetry as direct run lookup. The response contains up to 20
 items by default, accepts `limit` from 1 to 100, and returns `next_cursor` when another page exists.
 Pass that opaque run ID as `cursor` on the next request; cursors are valid only for their workflow.
+Use the optional `status` query parameter to select one lifecycle state: `pending`, `running`,
+`waiting`, `completed`, or `failed`. Keep the same filter while following a cursor to traverse one
+consistent result set.
 
 Steps may declare `depends_on` keys and can appear in any declaration order. The runtime rejects
 unknown, duplicate, self-referential, and cyclic dependencies before persistence, then executes a
@@ -327,7 +330,7 @@ across a worker crash and replay-safe recovery.
 | `POST` | `/v1/workflows` | Validate and persist a workflow |
 | `GET` | `/v1/workflows` | List workflows |
 | `GET` | `/v1/workflows/{id}` | Inspect a workflow |
-| `GET` | `/v1/workflows/{id}/runs` | List run history with cursor pagination |
+| `GET` | `/v1/workflows/{id}/runs` | List and filter run history with cursor pagination |
 | `POST` | `/v1/workflows/{id}/runs` | Execute a run, or enqueue it with `Prefer: respond-async` |
 | `GET` | `/v1/runs/{id}` | Inspect a run and all step telemetry |
 | `POST` | `/v1/runs/{id}/approval` | Approve or reject the run's pending human gate |
