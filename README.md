@@ -178,6 +178,9 @@ Pass that opaque run ID as `cursor` on the next request; cursors are valid only 
 Use the optional `status` query parameter to select one lifecycle state: `pending`, `running`,
 `waiting`, `completed`, or `failed`. Keep the same filter while following a cursor to traverse one
 consistent result set.
+Use `created_from` and `created_before` for a half-open creation-time interval: the lower bound is
+inclusive and the upper bound is exclusive. Both accept RFC 3339 timestamps with a required UTC
+offset. Repeat the same bounds while following `next_cursor`.
 
 Steps may declare `depends_on` keys and can appear in any declaration order. The runtime rejects
 unknown, duplicate, self-referential, and cyclic dependencies before persistence, then executes a

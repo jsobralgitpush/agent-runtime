@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
@@ -34,6 +35,21 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 
 def _prefers_async(value: str | None) -> bool:
     return bool(value and "respond-async" in {item.strip().lower() for item in value.split(",")})
+
+
+def _normalize_history_bound(value: datetime | None, field: str) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "invalid_run_time_range",
+                "reason": "timezone_required",
+                "field": field,
+            },
+        )
+    return value.astimezone(UTC)
 
 
 def _validate_workflow_extensions(definition: WorkflowDefinition) -> None:
@@ -136,13 +152,30 @@ async def list_workflow_runs(
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     cursor: Annotated[str | None, Query(max_length=36)] = None,
     run_status: Annotated[RunStatus | None, Query(alias="status")] = None,
+    created_from: datetime | None = None,
+    created_before: datetime | None = None,
 ) -> WorkflowRunPage:
+    created_from = _normalize_history_bound(created_from, "created_from")
+    created_before = _normalize_history_bound(created_before, "created_before")
+    if created_from is not None and created_before is not None and created_from >= created_before:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "invalid_run_time_range",
+                "reason": "created_from_must_precede_created_before",
+            },
+        )
+
     if await session.get(Workflow, workflow_id) is None:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
     conditions = [WorkflowRun.workflow_id == workflow_id]
     if run_status is not None:
         conditions.append(WorkflowRun.status == run_status)
+    if created_from is not None:
+        conditions.append(WorkflowRun.created_at >= created_from)
+    if created_before is not None:
+        conditions.append(WorkflowRun.created_at < created_before)
     if cursor is not None:
         cursor_run = await session.scalar(
             select(WorkflowRun).where(
