@@ -411,6 +411,78 @@ async def test_list_workflow_runs_filters_status_with_cursor_pagination(
     assert invalid_status.status_code == 422
 
 
+async def test_list_workflow_runs_filters_creation_time_range(client: AsyncClient) -> None:
+    workflow = await create_workflow(client)
+    run_url = f"/v1/workflows/{workflow['id']}/runs"
+    run_ids: list[str] = []
+    for index in range(4):
+        response = await client.post(
+            run_url,
+            json={"inputs": {"index": index}},
+            headers={"Prefer": "respond-async", "Idempotency-Key": f"time-{index}"},
+        )
+        assert response.status_code == 202
+        run_ids.append(response.json()["id"])
+
+    observed_at = datetime(2026, 1, 1, tzinfo=UTC)
+    async with TestSession() as session:
+        for index, run_id in enumerate(run_ids):
+            run = await session.get(WorkflowRun, run_id)
+            assert run is not None
+            run.created_at = observed_at + timedelta(hours=index)
+        await session.commit()
+
+    bounds = {
+        "created_from": (observed_at + timedelta(hours=1)).isoformat(),
+        "created_before": (observed_at + timedelta(hours=3)).isoformat(),
+        "limit": 1,
+    }
+    first_page = await client.get(run_url, params=bounds)
+    assert first_page.status_code == 200
+    assert [item["id"] for item in first_page.json()["items"]] == [run_ids[2]]
+    assert first_page.json()["next_cursor"] == run_ids[2]
+
+    second_page = await client.get(
+        run_url,
+        params={**bounds, "cursor": first_page.json()["next_cursor"]},
+    )
+    assert second_page.status_code == 200
+    assert [item["id"] for item in second_page.json()["items"]] == [run_ids[1]]
+    assert second_page.json()["next_cursor"] is None
+
+
+async def test_list_workflow_runs_rejects_invalid_time_ranges(client: AsyncClient) -> None:
+    workflow = await create_workflow(client)
+    run_url = f"/v1/workflows/{workflow['id']}/runs"
+    reversed_range = await client.get(
+        run_url,
+        params={
+            "created_from": "2026-01-02T00:00:00Z",
+            "created_before": "2026-01-01T00:00:00Z",
+        },
+    )
+    naive_bound = await client.get(
+        run_url,
+        params={"created_from": "2026-01-01T00:00:00"},
+    )
+
+    assert reversed_range.status_code == 422
+    assert reversed_range.json() == {
+        "detail": {
+            "code": "invalid_run_time_range",
+            "reason": "created_from_must_precede_created_before",
+        }
+    }
+    assert naive_bound.status_code == 422
+    assert naive_bound.json() == {
+        "detail": {
+            "code": "invalid_run_time_range",
+            "reason": "timezone_required",
+            "field": "created_from",
+        }
+    }
+
+
 async def test_execute_workflow_and_record_metrics(client: AsyncClient) -> None:
     workflow = await create_workflow(client)
     response = await client.post(

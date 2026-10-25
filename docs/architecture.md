@@ -59,6 +59,9 @@ An optional exact lifecycle-status filter is applied before the keyset boundary.
 query uses `(workflow_id, created_at, id)`, while filtered history uses the covering prefix
 `(workflow_id, status, created_at, id)`. The cursor itself remains a workflow-scoped ordering
 boundary rather than encoding mutable status, so a run transition cannot make its cursor unreadable.
+Creation-time filtering uses an immutable half-open `[created_from, created_before)` interval. The
+API requires timezone-aware values, normalizes them to UTC, and rejects empty or reversed ranges.
+Both status-filtered and unfiltered intervals retain the same indexed keyset access paths.
 
 An ASGI middleware records Prometheus request counts, duration, and current concurrency. Labels use
 the matched route template rather than the request path, so workflow and run IDs cannot create an
