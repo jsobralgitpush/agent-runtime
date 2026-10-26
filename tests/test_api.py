@@ -411,6 +411,58 @@ async def test_list_workflow_runs_filters_status_with_cursor_pagination(
     assert invalid_status.status_code == 422
 
 
+async def test_list_workflow_runs_filters_multiple_statuses_with_cursor_pagination(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    run_url = f"/v1/workflows/{workflow['id']}/runs"
+    run_ids: list[str] = []
+    for index in range(4):
+        response = await client.post(
+            run_url,
+            json={"inputs": {"index": index}},
+            headers={"Prefer": "respond-async", "Idempotency-Key": f"multi-status-{index}"},
+        )
+        assert response.status_code == 202
+        run_ids.append(response.json()["id"])
+
+    observed_at = datetime.now(UTC)
+    statuses = [
+        RunStatus.completed,
+        RunStatus.pending,
+        RunStatus.running,
+        RunStatus.waiting,
+    ]
+    async with TestSession() as session:
+        for index, (run_id, run_status) in enumerate(zip(run_ids, statuses, strict=True)):
+            run = await session.get(WorkflowRun, run_id)
+            assert run is not None
+            run.status = run_status
+            run.created_at = observed_at + timedelta(seconds=index)
+        await session.commit()
+
+    first_page = await client.get(
+        run_url,
+        params=[("status", "pending"), ("status", "waiting"), ("limit", "1")],
+    )
+    assert first_page.status_code == 200
+    assert [item["id"] for item in first_page.json()["items"]] == [run_ids[3]]
+    assert first_page.json()["next_cursor"] == run_ids[3]
+
+    second_page = await client.get(
+        run_url,
+        params=[
+            ("status", "pending"),
+            ("status", "waiting"),
+            ("limit", "1"),
+            ("cursor", first_page.json()["next_cursor"]),
+        ],
+    )
+    assert second_page.status_code == 200
+    assert [item["id"] for item in second_page.json()["items"]] == [run_ids[1]]
+    assert second_page.json()["next_cursor"] is None
+
+
 async def test_list_workflow_runs_filters_creation_time_range(client: AsyncClient) -> None:
     workflow = await create_workflow(client)
     run_url = f"/v1/workflows/{workflow['id']}/runs"

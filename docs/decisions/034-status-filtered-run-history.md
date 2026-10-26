@@ -30,4 +30,4 @@ existing index for unfiltered history.
 - A cursor remains usable if its run changes status because ordering fields are immutable.
 - Pages are not a transactional snapshot: runs may enter or leave the selected state between
   requests. Clients needing a current view should restart at the first page.
-- Multi-status and time-range filters remain separate work.
+- Multi-status and time-range filters remain separate work; ADRs 035 and 036 add them independently.
