@@ -151,7 +151,7 @@ async def list_workflow_runs(
     session: Session,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     cursor: Annotated[str | None, Query(max_length=36)] = None,
-    run_status: Annotated[RunStatus | None, Query(alias="status")] = None,
+    run_statuses: Annotated[list[RunStatus] | None, Query(alias="status")] = None,
     created_from: datetime | None = None,
     created_before: datetime | None = None,
 ) -> WorkflowRunPage:
@@ -170,8 +170,8 @@ async def list_workflow_runs(
         raise HTTPException(status_code=404, detail="Workflow not found")
 
     conditions = [WorkflowRun.workflow_id == workflow_id]
-    if run_status is not None:
-        conditions.append(WorkflowRun.status == run_status)
+    if run_statuses is not None:
+        conditions.append(WorkflowRun.status.in_(run_statuses))
     if created_from is not None:
         conditions.append(WorkflowRun.created_at >= created_from)
     if created_before is not None:

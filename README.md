@@ -175,9 +175,9 @@ Run history is available from `GET /v1/workflows/<workflow-id>/runs`. Results ar
 first and include the same step telemetry as direct run lookup. The response contains up to 20
 items by default, accepts `limit` from 1 to 100, and returns `next_cursor` when another page exists.
 Pass that opaque run ID as `cursor` on the next request; cursors are valid only for their workflow.
-Use the optional `status` query parameter to select one lifecycle state: `pending`, `running`,
-`waiting`, `completed`, or `failed`. Keep the same filter while following a cursor to traverse one
-consistent result set.
+Use the optional `status` query parameter to select lifecycle states: `pending`, `running`,
+`waiting`, `completed`, or `failed`. Repeat the parameter to combine states, such as
+`?status=pending&status=running&status=waiting`, and keep the same values while following a cursor.
 Use `created_from` and `created_before` for a half-open creation-time interval: the lower bound is
 inclusive and the upper bound is exclusive. Both accept RFC 3339 timestamps with a required UTC
 offset. Repeat the same bounds while following `next_cursor`.
