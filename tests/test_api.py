@@ -535,6 +535,90 @@ async def test_list_workflow_runs_rejects_invalid_time_ranges(client: AsyncClien
     }
 
 
+async def test_list_workflow_runs_filters_completion_time_range(client: AsyncClient) -> None:
+    workflow = await create_workflow(client)
+    run_url = f"/v1/workflows/{workflow['id']}/runs"
+    completed_ids: list[str] = []
+    for index in range(4):
+        response = await client.post(
+            run_url,
+            json={"inputs": {"index": index, "topic": f"completed {index}"}},
+            headers={"Idempotency-Key": f"completed-time-{index}"},
+        )
+        assert response.status_code == 201
+        completed_ids.append(response.json()["id"])
+    pending = await client.post(
+        run_url,
+        json={"inputs": {"index": 4}},
+        headers={"Prefer": "respond-async", "Idempotency-Key": "completed-time-pending"},
+    )
+    assert pending.status_code == 202
+
+    observed_at = datetime(2026, 1, 1, tzinfo=UTC)
+    async with TestSession() as session:
+        for index, run_id in enumerate(completed_ids):
+            run = await session.get(WorkflowRun, run_id)
+            assert run is not None
+            run.created_at = observed_at + timedelta(minutes=index)
+            run.completed_at = observed_at + timedelta(hours=index)
+        pending_run = await session.get(WorkflowRun, pending.json()["id"])
+        assert pending_run is not None
+        pending_run.created_at = observed_at + timedelta(minutes=4)
+        await session.commit()
+
+    bounds = {
+        "completed_from": (observed_at + timedelta(hours=1)).isoformat(),
+        "completed_before": (observed_at + timedelta(hours=3)).isoformat(),
+        "limit": 1,
+    }
+    first_page = await client.get(run_url, params=bounds)
+    assert first_page.status_code == 200
+    assert [item["id"] for item in first_page.json()["items"]] == [completed_ids[2]]
+    assert first_page.json()["next_cursor"] == completed_ids[2]
+
+    second_page = await client.get(
+        run_url,
+        params={**bounds, "cursor": first_page.json()["next_cursor"]},
+    )
+    assert second_page.status_code == 200
+    assert [item["id"] for item in second_page.json()["items"]] == [completed_ids[1]]
+    assert second_page.json()["next_cursor"] is None
+
+
+async def test_list_workflow_runs_rejects_invalid_completion_time_ranges(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    run_url = f"/v1/workflows/{workflow['id']}/runs"
+    reversed_range = await client.get(
+        run_url,
+        params={
+            "completed_from": "2026-01-02T00:00:00Z",
+            "completed_before": "2026-01-01T00:00:00Z",
+        },
+    )
+    naive_bound = await client.get(
+        run_url,
+        params={"completed_before": "2026-01-01T00:00:00"},
+    )
+
+    assert reversed_range.status_code == 422
+    assert reversed_range.json() == {
+        "detail": {
+            "code": "invalid_run_time_range",
+            "reason": "completed_from_must_precede_completed_before",
+        }
+    }
+    assert naive_bound.status_code == 422
+    assert naive_bound.json() == {
+        "detail": {
+            "code": "invalid_run_time_range",
+            "reason": "timezone_required",
+            "field": "completed_before",
+        }
+    }
+
+
 async def test_execute_workflow_and_record_metrics(client: AsyncClient) -> None:
     workflow = await create_workflow(client)
     response = await client.post(

@@ -52,6 +52,22 @@ def _normalize_history_bound(value: datetime | None, field: str) -> datetime | N
     return value.astimezone(UTC)
 
 
+def _validate_history_range(
+    lower: datetime | None,
+    upper: datetime | None,
+    lower_field: str,
+    upper_field: str,
+) -> None:
+    if lower is not None and upper is not None and lower >= upper:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "invalid_run_time_range",
+                "reason": f"{lower_field}_must_precede_{upper_field}",
+            },
+        )
+
+
 def _validate_workflow_extensions(definition: WorkflowDefinition) -> None:
     provider_names = set(build_provider_registry(get_settings()).names())
     tool_names = set(ToolRegistry().names())
@@ -154,17 +170,15 @@ async def list_workflow_runs(
     run_statuses: Annotated[list[RunStatus] | None, Query(alias="status")] = None,
     created_from: datetime | None = None,
     created_before: datetime | None = None,
+    completed_from: datetime | None = None,
+    completed_before: datetime | None = None,
 ) -> WorkflowRunPage:
     created_from = _normalize_history_bound(created_from, "created_from")
     created_before = _normalize_history_bound(created_before, "created_before")
-    if created_from is not None and created_before is not None and created_from >= created_before:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail={
-                "code": "invalid_run_time_range",
-                "reason": "created_from_must_precede_created_before",
-            },
-        )
+    completed_from = _normalize_history_bound(completed_from, "completed_from")
+    completed_before = _normalize_history_bound(completed_before, "completed_before")
+    _validate_history_range(created_from, created_before, "created_from", "created_before")
+    _validate_history_range(completed_from, completed_before, "completed_from", "completed_before")
 
     if await session.get(Workflow, workflow_id) is None:
         raise HTTPException(status_code=404, detail="Workflow not found")
@@ -176,6 +190,10 @@ async def list_workflow_runs(
         conditions.append(WorkflowRun.created_at >= created_from)
     if created_before is not None:
         conditions.append(WorkflowRun.created_at < created_before)
+    if completed_from is not None:
+        conditions.append(WorkflowRun.completed_at >= completed_from)
+    if completed_before is not None:
+        conditions.append(WorkflowRun.completed_at < completed_before)
     if cursor is not None:
         cursor_run = await session.scalar(
             select(WorkflowRun).where(
