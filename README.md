@@ -181,6 +181,9 @@ Use the optional `status` query parameter to select lifecycle states: `pending`,
 Use `created_from` and `created_before` for a half-open creation-time interval: the lower bound is
 inclusive and the upper bound is exclusive. Both accept RFC 3339 timestamps with a required UTC
 offset. Repeat the same bounds while following `next_cursor`.
+Use `completed_from` and `completed_before` with the same interval and timezone rules to select runs
+that became terminal during a period. Pending, running, and waiting runs have no completion time and
+are therefore excluded whenever either completion bound is present.
 
 Steps may declare `depends_on` keys and can appear in any declaration order. The runtime rejects
 unknown, duplicate, self-referential, and cyclic dependencies before persistence, then executes a

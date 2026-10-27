@@ -31,3 +31,4 @@ already cover these predicates, so no schema change is required.
 - Timezone handling is explicit and normalized across clients.
 - Cursors remain workflow-scoped ordering boundaries rather than carrying filter state.
 - Time filtering does not delete data or replace a retention policy.
+- Completion-time filtering remains separate work; ADR 037 adds it independently.

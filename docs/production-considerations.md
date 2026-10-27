@@ -71,6 +71,8 @@ Clients should keep the complete status set unchanged while following cursors an
 first page when they need a current operational view.
 Creation-time bounds restrict query results but are not a retention control. Continue to archive or
 delete historical runs according to an explicit data-lifecycle policy.
+Completion-time bounds also remain query filters rather than retention controls. Runs without a
+terminal timestamp are intentionally absent from completion-filtered results.
 Provider and tool discovery endpoints must use that same authorization boundary in a multi-tenant
 deployment. Knowing a tool name is not permission to execute it.
 Creation-time extension validation reflects the API process only. Keep provider credentials and
