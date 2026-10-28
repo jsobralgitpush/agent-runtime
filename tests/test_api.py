@@ -347,6 +347,47 @@ async def test_list_workflow_runs_rejects_missing_workflow(client: AsyncClient) 
     assert response.json() == {"detail": "Workflow not found"}
 
 
+async def test_list_workflow_runs_filters_by_idempotency_key(client: AsyncClient) -> None:
+    first_workflow = await create_workflow(client)
+    second_workflow = await create_workflow(client)
+    first_url = f"/v1/workflows/{first_workflow['id']}/runs"
+    second_url = f"/v1/workflows/{second_workflow['id']}/runs"
+    matching = await client.post(
+        first_url,
+        json={"inputs": {"topic": "matching"}},
+        headers={"Idempotency-Key": "request-lookup"},
+    )
+    other = await client.post(
+        first_url,
+        json={"inputs": {"topic": "other"}},
+        headers={"Idempotency-Key": "another-request"},
+    )
+    same_key_other_workflow = await client.post(
+        second_url,
+        json={"inputs": {"topic": "other workflow"}},
+        headers={"Idempotency-Key": "request-lookup"},
+    )
+    assert matching.status_code == 201
+    assert other.status_code == 201
+    assert same_key_other_workflow.status_code == 201
+
+    response = await client.get(first_url, params={"idempotency_key": "request-lookup"})
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["items"]] == [matching.json()["id"]]
+    assert [step["step_key"] for step in response.json()["items"][0]["steps"]] == [
+        "draft",
+        "publish",
+    ]
+    assert response.json()["next_cursor"] is None
+
+    missing = await client.get(first_url, params={"idempotency_key": "missing-request"})
+    assert missing.status_code == 200
+    assert missing.json() == {"items": [], "next_cursor": None}
+
+    oversized = await client.get(first_url, params={"idempotency_key": "x" * 256})
+    assert oversized.status_code == 422
+
+
 async def test_list_workflow_runs_filters_status_with_cursor_pagination(
     client: AsyncClient,
 ) -> None:
