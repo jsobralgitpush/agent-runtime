@@ -184,6 +184,8 @@ offset. Repeat the same bounds while following `next_cursor`.
 Use `completed_from` and `completed_before` with the same interval and timezone rules to select runs
 that became terminal during a period. Pending, running, and waiting runs have no completion time and
 are therefore excluded whenever either completion bound is present.
+Use `idempotency_key` for an exact, workflow-scoped lookup after a client loses the original create
+response. A missing key returns an empty page; the filter never creates or re-executes a run.
 
 Steps may declare `depends_on` keys and can appear in any declaration order. The runtime rejects
 unknown, duplicate, self-referential, and cyclic dependencies before persistence, then executes a

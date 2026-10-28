@@ -167,6 +167,7 @@ async def list_workflow_runs(
     session: Session,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     cursor: Annotated[str | None, Query(max_length=36)] = None,
+    idempotency_key: Annotated[str | None, Query(max_length=255)] = None,
     run_statuses: Annotated[list[RunStatus] | None, Query(alias="status")] = None,
     created_from: datetime | None = None,
     created_before: datetime | None = None,
@@ -184,6 +185,8 @@ async def list_workflow_runs(
         raise HTTPException(status_code=404, detail="Workflow not found")
 
     conditions = [WorkflowRun.workflow_id == workflow_id]
+    if idempotency_key is not None:
+        conditions.append(WorkflowRun.idempotency_key == idempotency_key)
     if run_statuses is not None:
         conditions.append(WorkflowRun.status.in_(run_statuses))
     if created_from is not None:

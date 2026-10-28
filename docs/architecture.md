@@ -65,6 +65,8 @@ Both status-filtered and unfiltered intervals retain the same indexed keyset acc
 Completion-time filtering follows the same half-open and timezone rules. It excludes nonterminal
 runs through comparisons against nullable `completed_at`; `(workflow_id, completed_at)` bounds the
 candidate scan before results retain the endpoint's existing `(created_at, id)` order.
+Exact idempotency-key lookup reuses the database-enforced `(workflow_id, idempotency_key)` unique
+constraint. It remains a history filter: lookup never creates a run or invokes the engine.
 
 An ASGI middleware records Prometheus request counts, duration, and current concurrency. Labels use
 the matched route template rather than the request path, so workflow and run IDs cannot create an
