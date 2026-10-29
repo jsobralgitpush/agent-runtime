@@ -67,6 +67,9 @@ runs through comparisons against nullable `completed_at`; `(workflow_id, complet
 candidate scan before results retain the endpoint's existing `(created_at, id)` order.
 Exact idempotency-key lookup reuses the database-enforced `(workflow_id, idempotency_key)` unique
 constraint. It remains a history filter: lookup never creates a run or invokes the engine.
+The run-summary endpoint performs one workflow-scoped `GROUP BY status` query and returns explicit
+zeroes for absent lifecycle states. It reuses the `(workflow_id, status, created_at, id)` index and
+does not load run payloads or step telemetry.
 
 An ASGI middleware records Prometheus request counts, duration, and current concurrency. Labels use
 the matched route template rather than the request path, so workflow and run IDs cannot create an

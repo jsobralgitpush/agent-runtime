@@ -187,6 +187,11 @@ are therefore excluded whenever either completion bound is present.
 Use `idempotency_key` for an exact, workflow-scoped lookup after a client loses the original create
 response. A missing key returns an empty page; the filter never creates or re-executes a run.
 
+Use `GET /v1/workflows/<workflow-id>/runs/summary` for a lightweight operational view. It returns
+the total run count plus explicit counts for every lifecycle status without loading run inputs,
+outputs, errors, or step telemetry. Counts are current at query time rather than a transactional
+snapshot shared with later history requests.
+
 Steps may declare `depends_on` keys and can appear in any declaration order. The runtime rejects
 unknown, duplicate, self-referential, and cyclic dependencies before persistence, then executes a
 stable topological plan using declaration order to break ties. A definition that uses dependencies
@@ -339,6 +344,7 @@ across a worker crash and replay-safe recovery.
 | `GET` | `/v1/workflows` | List workflows |
 | `GET` | `/v1/workflows/{id}` | Inspect a workflow |
 | `GET` | `/v1/workflows/{id}/runs` | List and filter run history with cursor pagination |
+| `GET` | `/v1/workflows/{id}/runs/summary` | Count workflow runs by lifecycle status |
 | `POST` | `/v1/workflows/{id}/runs` | Execute a run, or enqueue it with `Prefer: respond-async` |
 | `GET` | `/v1/runs/{id}` | Inspect a run and all step telemetry |
 | `POST` | `/v1/runs/{id}/approval` | Approve or reject the run's pending human gate |
