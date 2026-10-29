@@ -266,6 +266,58 @@ async def test_create_list_and_get_workflow(client: AsyncClient) -> None:
     assert fetched.json() == created
 
 
+async def test_summarize_workflow_runs_counts_statuses_without_loading_history(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    empty_workflow = await create_workflow(client)
+    async with TestSession() as session:
+        session.add_all(
+            [
+                WorkflowRun(workflow_id=workflow["id"], status=RunStatus.pending),
+                WorkflowRun(workflow_id=workflow["id"], status=RunStatus.pending),
+                WorkflowRun(workflow_id=workflow["id"], status=RunStatus.waiting),
+                WorkflowRun(workflow_id=workflow["id"], status=RunStatus.completed),
+                WorkflowRun(workflow_id=workflow["id"], status=RunStatus.failed),
+            ]
+        )
+        await session.commit()
+
+    response = await client.get(f"/v1/workflows/{workflow['id']}/runs/summary")
+    empty_response = await client.get(f"/v1/workflows/{empty_workflow['id']}/runs/summary")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "workflow_id": workflow["id"],
+        "total": 5,
+        "counts": {
+            "pending": 2,
+            "running": 0,
+            "waiting": 1,
+            "completed": 1,
+            "failed": 1,
+        },
+    }
+    assert empty_response.json() == {
+        "workflow_id": empty_workflow["id"],
+        "total": 0,
+        "counts": {
+            "pending": 0,
+            "running": 0,
+            "waiting": 0,
+            "completed": 0,
+            "failed": 0,
+        },
+    }
+
+
+async def test_summarize_workflow_runs_rejects_unknown_workflow(client: AsyncClient) -> None:
+    response = await client.get("/v1/workflows/not-found/runs/summary")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Workflow not found"}
+
+
 async def test_list_workflow_runs_uses_stable_cursor_pagination(client: AsyncClient) -> None:
     workflow = await create_workflow(client)
     run_url = f"/v1/workflows/{workflow['id']}/runs"

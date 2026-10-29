@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -19,11 +19,13 @@ from app.schemas import (
     ProviderRead,
     RunCreate,
     RunRead,
+    RunStatusCounts,
     ToolRead,
     WorkflowCreate,
     WorkflowDefinition,
     WorkflowRead,
     WorkflowRunPage,
+    WorkflowRunSummary,
     WorkflowValidationRead,
 )
 from app.tools import ToolRegistry
@@ -230,6 +232,34 @@ async def list_workflow_runs(
     items = runs[:limit]
     next_cursor = items[-1].id if len(runs) > limit else None
     return WorkflowRunPage(items=items, next_cursor=next_cursor)
+
+
+@router.get(
+    "/workflows/{workflow_id}/runs/summary",
+    response_model=WorkflowRunSummary,
+)
+async def summarize_workflow_runs(workflow_id: str, session: Session) -> WorkflowRunSummary:
+    if await session.get(Workflow, workflow_id) is None:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    result = await session.execute(
+        select(WorkflowRun.status, func.count(WorkflowRun.id))
+        .where(WorkflowRun.workflow_id == workflow_id)
+        .group_by(WorkflowRun.status)
+    )
+    counts_by_status = {run_status: count for run_status, count in result.all()}
+    counts = RunStatusCounts(
+        pending=counts_by_status.get(RunStatus.pending, 0),
+        running=counts_by_status.get(RunStatus.running, 0),
+        waiting=counts_by_status.get(RunStatus.waiting, 0),
+        completed=counts_by_status.get(RunStatus.completed, 0),
+        failed=counts_by_status.get(RunStatus.failed, 0),
+    )
+    return WorkflowRunSummary(
+        workflow_id=workflow_id,
+        total=sum(counts_by_status.values()),
+        counts=counts,
+    )
 
 
 @router.post(

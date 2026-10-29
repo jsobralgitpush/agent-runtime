@@ -258,5 +258,19 @@ class WorkflowRunPage(BaseModel):
     next_cursor: str | None = None
 
 
+class RunStatusCounts(BaseModel):
+    pending: int = 0
+    running: int = 0
+    waiting: int = 0
+    completed: int = 0
+    failed: int = 0
+
+
+class WorkflowRunSummary(BaseModel):
+    workflow_id: str
+    total: int
+    counts: RunStatusCounts
+
+
 class HealthRead(BaseModel):
     status: Literal["ok"] = "ok"
