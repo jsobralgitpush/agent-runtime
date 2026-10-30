@@ -318,6 +318,79 @@ async def test_summarize_workflow_runs_rejects_unknown_workflow(client: AsyncCli
     assert response.json() == {"detail": "Workflow not found"}
 
 
+async def test_summarize_workflow_runs_filters_creation_time_range(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    observed_at = datetime(2026, 1, 1, tzinfo=UTC)
+    async with TestSession() as session:
+        runs = [
+            WorkflowRun(workflow_id=workflow["id"], status=RunStatus.pending),
+            WorkflowRun(workflow_id=workflow["id"], status=RunStatus.running),
+            WorkflowRun(workflow_id=workflow["id"], status=RunStatus.completed),
+            WorkflowRun(workflow_id=workflow["id"], status=RunStatus.failed),
+        ]
+        for index, run in enumerate(runs):
+            run.created_at = observed_at + timedelta(hours=index)
+        session.add_all(runs)
+        await session.commit()
+
+    response = await client.get(
+        f"/v1/workflows/{workflow['id']}/runs/summary",
+        params={
+            "created_from": (observed_at + timedelta(hours=1)).isoformat(),
+            "created_before": (observed_at + timedelta(hours=3)).isoformat(),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "workflow_id": workflow["id"],
+        "total": 2,
+        "counts": {
+            "pending": 0,
+            "running": 1,
+            "waiting": 0,
+            "completed": 1,
+            "failed": 0,
+        },
+    }
+
+
+async def test_summarize_workflow_runs_rejects_invalid_creation_time_ranges(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    summary_url = f"/v1/workflows/{workflow['id']}/runs/summary"
+    reversed_range = await client.get(
+        summary_url,
+        params={
+            "created_from": "2026-01-02T00:00:00Z",
+            "created_before": "2026-01-01T00:00:00Z",
+        },
+    )
+    naive_bound = await client.get(
+        summary_url,
+        params={"created_from": "2026-01-01T00:00:00"},
+    )
+
+    assert reversed_range.status_code == 422
+    assert reversed_range.json() == {
+        "detail": {
+            "code": "invalid_run_time_range",
+            "reason": "created_from_must_precede_created_before",
+        }
+    }
+    assert naive_bound.status_code == 422
+    assert naive_bound.json() == {
+        "detail": {
+            "code": "invalid_run_time_range",
+            "reason": "timezone_required",
+            "field": "created_from",
+        }
+    }
+
+
 async def test_list_workflow_runs_uses_stable_cursor_pagination(client: AsyncClient) -> None:
     workflow = await create_workflow(client)
     run_url = f"/v1/workflows/{workflow['id']}/runs"
