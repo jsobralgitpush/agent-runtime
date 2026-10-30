@@ -238,13 +238,28 @@ async def list_workflow_runs(
     "/workflows/{workflow_id}/runs/summary",
     response_model=WorkflowRunSummary,
 )
-async def summarize_workflow_runs(workflow_id: str, session: Session) -> WorkflowRunSummary:
+async def summarize_workflow_runs(
+    workflow_id: str,
+    session: Session,
+    created_from: datetime | None = None,
+    created_before: datetime | None = None,
+) -> WorkflowRunSummary:
+    created_from = _normalize_history_bound(created_from, "created_from")
+    created_before = _normalize_history_bound(created_before, "created_before")
+    _validate_history_range(created_from, created_before, "created_from", "created_before")
+
     if await session.get(Workflow, workflow_id) is None:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
+    conditions = [WorkflowRun.workflow_id == workflow_id]
+    if created_from is not None:
+        conditions.append(WorkflowRun.created_at >= created_from)
+    if created_before is not None:
+        conditions.append(WorkflowRun.created_at < created_before)
+
     result = await session.execute(
         select(WorkflowRun.status, func.count(WorkflowRun.id))
-        .where(WorkflowRun.workflow_id == workflow_id)
+        .where(*conditions)
         .group_by(WorkflowRun.status)
     )
     counts_by_status = {run_status: count for run_status, count in result.all()}

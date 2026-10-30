@@ -70,7 +70,8 @@ Idempotency keys are also not authorization capabilities. Scope exact-key lookup
 authenticated tenant and avoid embedding secrets or personal data in client-generated keys.
 Run summaries are operational metadata and require the same workflow ownership check as detailed
 history. They are point-in-time aggregates, not a snapshot guarantee for subsequent page requests,
-and should not be exposed as a high-cardinality Prometheus label set.
+and should not be exposed as a high-cardinality Prometheus label set. Creation-time bounds restrict
+the aggregate but do not provide retention, deletion, or immutable reporting snapshots.
 Status-filtered pages are not a database snapshot: runs can change lifecycle state between requests.
 Clients should keep the complete status set unchanged while following cursors and refresh from the
 first page when they need a current operational view.
