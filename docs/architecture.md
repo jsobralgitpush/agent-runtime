@@ -71,7 +71,9 @@ The run-summary endpoint performs one workflow-scoped `GROUP BY status` query an
 zeroes for absent lifecycle states. It reuses the `(workflow_id, status, created_at, id)` index and
 does not load run payloads or step telemetry. Optional creation-time bounds reuse the history
 endpoint's timezone normalization, half-open interval, and deterministic validation rules before
-the aggregate query executes.
+the aggregate query executes. Completion-time bounds use the same contract and nullable
+`completed_at` semantics, so nonterminal runs are excluded whenever either completion bound is
+present. Combining both windows computes their intersection.
 
 An ASGI middleware records Prometheus request counts, duration, and current concurrency. Labels use
 the matched route template rather than the request path, so workflow and run IDs cannot create an

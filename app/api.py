@@ -243,10 +243,15 @@ async def summarize_workflow_runs(
     session: Session,
     created_from: datetime | None = None,
     created_before: datetime | None = None,
+    completed_from: datetime | None = None,
+    completed_before: datetime | None = None,
 ) -> WorkflowRunSummary:
     created_from = _normalize_history_bound(created_from, "created_from")
     created_before = _normalize_history_bound(created_before, "created_before")
+    completed_from = _normalize_history_bound(completed_from, "completed_from")
+    completed_before = _normalize_history_bound(completed_before, "completed_before")
     _validate_history_range(created_from, created_before, "created_from", "created_before")
+    _validate_history_range(completed_from, completed_before, "completed_from", "completed_before")
 
     if await session.get(Workflow, workflow_id) is None:
         raise HTTPException(status_code=404, detail="Workflow not found")
@@ -256,6 +261,10 @@ async def summarize_workflow_runs(
         conditions.append(WorkflowRun.created_at >= created_from)
     if created_before is not None:
         conditions.append(WorkflowRun.created_at < created_before)
+    if completed_from is not None:
+        conditions.append(WorkflowRun.completed_at >= completed_from)
+    if completed_before is not None:
+        conditions.append(WorkflowRun.completed_at < completed_before)
 
     result = await session.execute(
         select(WorkflowRun.status, func.count(WorkflowRun.id))
