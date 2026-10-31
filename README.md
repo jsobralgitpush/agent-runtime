@@ -190,8 +190,9 @@ response. A missing key returns an empty page; the filter never creates or re-ex
 Use `GET /v1/workflows/<workflow-id>/runs/summary` for a lightweight operational view. It returns
 the total run count plus explicit counts for every lifecycle status without loading run inputs,
 outputs, errors, or step telemetry. Apply the same optional `created_from` and `created_before`
-half-open interval to produce time-bounded totals. Counts are current at query time rather than a
-transactional snapshot shared with later history requests.
+half-open interval to produce creation-bounded totals, or `completed_from` and `completed_before`
+to count runs that became terminal during a period. Creation and completion bounds may be combined.
+Counts are current at query time rather than a transactional snapshot shared with later requests.
 
 Steps may declare `depends_on` keys and can appear in any declaration order. The runtime rejects
 unknown, duplicate, self-referential, and cyclic dependencies before persistence, then executes a

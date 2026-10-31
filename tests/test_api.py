@@ -391,6 +391,120 @@ async def test_summarize_workflow_runs_rejects_invalid_creation_time_ranges(
     }
 
 
+async def test_summarize_workflow_runs_filters_completion_time_range(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    observed_at = datetime(2026, 1, 1, tzinfo=UTC)
+    async with TestSession() as session:
+        runs = [
+            WorkflowRun(
+                workflow_id=workflow["id"],
+                status=RunStatus.completed,
+                created_at=observed_at,
+                completed_at=observed_at + timedelta(hours=1),
+            ),
+            WorkflowRun(
+                workflow_id=workflow["id"],
+                status=RunStatus.failed,
+                created_at=observed_at + timedelta(hours=1),
+                completed_at=observed_at + timedelta(hours=2),
+            ),
+            WorkflowRun(
+                workflow_id=workflow["id"],
+                status=RunStatus.completed,
+                created_at=observed_at + timedelta(hours=4),
+                completed_at=observed_at + timedelta(hours=2, minutes=30),
+            ),
+            WorkflowRun(
+                workflow_id=workflow["id"],
+                status=RunStatus.failed,
+                created_at=observed_at + timedelta(hours=2),
+                completed_at=observed_at + timedelta(hours=3),
+            ),
+            WorkflowRun(
+                workflow_id=workflow["id"],
+                status=RunStatus.pending,
+                created_at=observed_at + timedelta(hours=1),
+            ),
+        ]
+        session.add_all(runs)
+        await session.commit()
+
+    summary_url = f"/v1/workflows/{workflow['id']}/runs/summary"
+    completion_bounds = {
+        "completed_from": (observed_at + timedelta(hours=1)).isoformat(),
+        "completed_before": (observed_at + timedelta(hours=3)).isoformat(),
+    }
+    response = await client.get(summary_url, params=completion_bounds)
+    combined_response = await client.get(
+        summary_url,
+        params={
+            **completion_bounds,
+            "created_before": (observed_at + timedelta(hours=3)).isoformat(),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "workflow_id": workflow["id"],
+        "total": 3,
+        "counts": {
+            "pending": 0,
+            "running": 0,
+            "waiting": 0,
+            "completed": 2,
+            "failed": 1,
+        },
+    }
+    assert combined_response.status_code == 200
+    assert combined_response.json() == {
+        "workflow_id": workflow["id"],
+        "total": 2,
+        "counts": {
+            "pending": 0,
+            "running": 0,
+            "waiting": 0,
+            "completed": 1,
+            "failed": 1,
+        },
+    }
+
+
+async def test_summarize_workflow_runs_rejects_invalid_completion_time_ranges(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    summary_url = f"/v1/workflows/{workflow['id']}/runs/summary"
+    reversed_range = await client.get(
+        summary_url,
+        params={
+            "completed_from": "2026-01-02T00:00:00Z",
+            "completed_before": "2026-01-01T00:00:00Z",
+        },
+    )
+    naive_bound = await client.get(
+        summary_url,
+        params={"completed_before": "2026-01-01T00:00:00"},
+    )
+
+    assert reversed_range.status_code == 422
+    assert reversed_range.json() == {
+        "detail": {
+            "code": "invalid_run_time_range",
+            "reason": "completed_from_must_precede_completed_before",
+        }
+    }
+    assert naive_bound.status_code == 422
+    assert naive_bound.json() == {
+        "detail": {
+            "code": "invalid_run_time_range",
+            "reason": "timezone_required",
+            "field": "completed_before",
+        }
+    }
+
+
 async def test_list_workflow_runs_uses_stable_cursor_pagination(client: AsyncClient) -> None:
     workflow = await create_workflow(client)
     run_url = f"/v1/workflows/{workflow['id']}/runs"
