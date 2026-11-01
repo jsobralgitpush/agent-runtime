@@ -274,3 +274,7 @@ class WorkflowRunSummary(BaseModel):
 
 class HealthRead(BaseModel):
     status: Literal["ok"] = "ok"
+
+
+class ReadinessRead(BaseModel):
+    status: Literal["ready"] = "ready"

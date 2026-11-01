@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -17,6 +17,7 @@ from app.schemas import (
     ApprovalDecision,
     HealthRead,
     ProviderRead,
+    ReadinessRead,
     RunCreate,
     RunRead,
     RunStatusCounts,
@@ -98,6 +99,18 @@ def _validate_workflow_extensions(definition: WorkflowDefinition) -> None:
 @router.get("/health", response_model=HealthRead, tags=["operations"])
 async def health() -> HealthRead:
     return HealthRead()
+
+
+@router.get("/ready", response_model=ReadinessRead, tags=["operations"])
+async def readiness(session: Session) -> ReadinessRead:
+    try:
+        await session.execute(select(1))
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "database_unavailable"},
+        ) from exc
+    return ReadinessRead()
 
 
 @router.get("/metrics", tags=["operations"], response_class=Response)

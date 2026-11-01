@@ -70,6 +70,11 @@ make demo
 
 The demo creates a two-step workflow (fake LLM, then uppercase tool), runs it with an idempotency key, and prints the recorded run.
 
+Use `GET /v1/health` as a process liveness probe; it deliberately avoids dependencies. Use
+`GET /v1/ready` before routing API traffic. Readiness performs one database round trip and returns
+`503` with a sanitized error code when persistence is unavailable. It does not probe providers or
+workers.
+
 Prometheus metrics are available at <http://localhost:8000/v1/metrics>. They use HTTP method,
 matched route template, and status code labels; concrete resource IDs are never used as labels.
 The same endpoint includes workflow execution counts and duration by synchronous/worker mode and
@@ -338,6 +343,7 @@ across a worker crash and replay-safe recovery.
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/v1/health` | Liveness check |
+| `GET` | `/v1/ready` | Database-backed readiness check |
 | `GET` | `/v1/metrics` | Prometheus HTTP RED metrics |
 | `GET` | `/v1/providers` | List provider names available to this runtime |
 | `GET` | `/v1/tools` | List allowlisted tool names available to this runtime |

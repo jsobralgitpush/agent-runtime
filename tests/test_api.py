@@ -2,6 +2,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.engine import WorkerLeaseLostError, assert_active_lease
@@ -86,6 +88,34 @@ async def test_health(client: AsyncClient) -> None:
     response = await client.get("/v1/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+async def test_readiness_checks_database_connectivity(client: AsyncClient) -> None:
+    response = await client.get("/v1/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+
+
+async def test_readiness_sanitizes_database_failures(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def unavailable_database(
+        session: AsyncSession,
+        statement: object,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        raise SQLAlchemyError("sensitive connection detail")
+
+    monkeypatch.setattr(AsyncSession, "execute", unavailable_database)
+
+    response = await client.get("/v1/ready")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"code": "database_unavailable"}}
+    assert "sensitive" not in response.text
 
 
 async def test_provider_discovery_lists_available_names_without_configuration(
