@@ -16,11 +16,19 @@ v0.1 demonstrates production concerns but is not presented as a finished multi-t
 - Workers optionally expose process-local claim, active-run, recovery, workflow, and step metrics.
 - Optional OTLP/HTTP tracing correlates API requests with workflow and step execution.
 - JSONL evaluation datasets can exercise persisted workflows with exact expected outputs.
+- Separate liveness and database-backed readiness endpoints support process restart and traffic
+  routing decisions without probing external providers.
 - The container uses a non-root user.
 - CI has read-only repository permissions and a frozen dependency installation.
 - The fake provider enables deterministic tests without sending data externally.
 
 ## Required before external traffic
+
+Configure the process liveness probe against `/v1/health` and the traffic readiness probe against
+`/v1/ready`. Database readiness is intentionally narrow: it does not prove migrations are current,
+workers are consuming the queue, providers are reachable, or tenant configuration is valid. Monitor
+those concerns separately and protect operational endpoints according to the deployment network
+policy.
 
 ### Queueing and recovery
 

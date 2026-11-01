@@ -50,6 +50,11 @@ existing synchronous API remains backward compatible.
 
 `app/api.py` owns HTTP behavior only: validation, resource lookup, idempotent creation, and response serialization. It does not know provider-specific details.
 
+`GET /v1/health` is dependency-free process liveness. `GET /v1/ready` performs a minimal database
+round trip and returns a sanitized `503 database_unavailable` response when persistence cannot be
+reached. Readiness deliberately avoids provider calls and worker coordination, keeping probe cost
+and external side effects bounded.
+
 Workflow run history uses keyset pagination ordered by `(created_at, id)` descending. The last run
 ID in a non-final page is an opaque cursor: the API reloads that row, verifies that it belongs to
 the requested workflow, then queries strictly older rows. A composite database index on
