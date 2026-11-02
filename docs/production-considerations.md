@@ -71,6 +71,9 @@ intentionally exclude human waiting time.
 ### Authentication and tenancy
 
 Add authentication, tenant ownership columns, row-level authorization, rate limits, payload limits, and audit events. Every query must be scoped by tenant.
+Workflow names are labels rather than authorization capabilities. Exact-name catalog lookup must
+remain tenant-scoped once ownership is introduced, and clients must use the returned workflow ID
+for later operations because multiple workflows may share a name.
 Run-history cursors are run IDs, not authorization capabilities. Validate workflow and cursor
 ownership inside the tenant boundary, retain the 100-item page limit, and define retention or
 archival before histories grow without bound.
