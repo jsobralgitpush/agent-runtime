@@ -296,6 +296,36 @@ async def test_create_list_and_get_workflow(client: AsyncClient) -> None:
     assert fetched.json() == created
 
 
+async def test_list_workflows_filters_by_exact_name(client: AsyncClient) -> None:
+    created: list[dict[str, object]] = []
+    for name in ("Writer", "Writer", "writer", "Researcher"):
+        response = await client.post(
+            "/v1/workflows",
+            json={
+                "name": name,
+                "definition": {"steps": [{"key": "draft", "type": "llm"}]},
+            },
+        )
+        assert response.status_code == 201
+        created.append(response.json())
+
+    response = await client.get("/v1/workflows", params={"name": "Writer"})
+
+    assert response.status_code == 200
+    assert {workflow["id"] for workflow in response.json()} == {
+        created[0]["id"],
+        created[1]["id"],
+    }
+    assert {workflow["name"] for workflow in response.json()} == {"Writer"}
+    assert (await client.get("/v1/workflows", params={"name": "writer"})).json() == [created[2]]
+    assert (await client.get("/v1/workflows", params={"name": "Missing"})).json() == []
+
+
+async def test_list_workflows_rejects_invalid_name_filter(client: AsyncClient) -> None:
+    assert (await client.get("/v1/workflows", params={"name": ""})).status_code == 422
+    assert (await client.get("/v1/workflows", params={"name": "x" * 121})).status_code == 422
+
+
 async def test_summarize_workflow_runs_counts_statuses_without_loading_history(
     client: AsyncClient,
 ) -> None:

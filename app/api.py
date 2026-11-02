@@ -155,8 +155,14 @@ async def create_workflow(payload: WorkflowCreate, session: Session) -> Workflow
 
 
 @router.get("/workflows", response_model=list[WorkflowRead])
-async def list_workflows(session: Session) -> list[Workflow]:
-    result = await session.scalars(select(Workflow).order_by(Workflow.created_at.desc()))
+async def list_workflows(
+    session: Session,
+    name: Annotated[str | None, Query(min_length=1, max_length=120)] = None,
+) -> list[Workflow]:
+    query = select(Workflow)
+    if name is not None:
+        query = query.where(Workflow.name == name)
+    result = await session.scalars(query.order_by(Workflow.created_at.desc()))
     return list(result)
 
 

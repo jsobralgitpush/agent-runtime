@@ -55,6 +55,10 @@ round trip and returns a sanitized `503 database_unavailable` response when pers
 reached. Readiness deliberately avoids provider calls and worker coordination, keeping probe cost
 and external side effects bounded.
 
+Workflow catalog listing accepts an optional exact, case-sensitive `name` filter. It reuses the
+existing workflow-name index and returns every match because display names are intentionally not
+unique. The unfiltered request preserves the original newest-first catalog behavior.
+
 Workflow run history uses keyset pagination ordered by `(created_at, id)` descending. The last run
 ID in a non-final page is an opaque cursor: the API reloads that row, verifies that it belongs to
 the requested workflow, then queries strictly older rows. A composite database index on
