@@ -2,13 +2,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.engine import WorkerLeaseLostError, assert_active_lease
 from app.metrics import METRICS_CONTENT_TYPE
-from app.models import RunStatus, StepRun, WorkflowRun
+from app.models import RunStatus, StepRun, Workflow, WorkflowRun
 from app.worker import (
     LEASE_EXPIRED_ERROR,
     claim_next_run,
@@ -294,6 +294,79 @@ async def test_create_list_and_get_workflow(client: AsyncClient) -> None:
     assert listed.status_code == 200
     assert len(listed.json()) == 1
     assert fetched.json() == created
+
+
+async def test_workflow_creation_idempotency_returns_original(client: AsyncClient) -> None:
+    payload = {
+        "name": "Reliable writer",
+        "description": "Created exactly once",
+        "definition": {"steps": [{"key": "draft", "type": "llm"}]},
+    }
+    headers = {"Idempotency-Key": "workflow-request-123"}
+
+    first = await client.post("/v1/workflows", json=payload, headers=headers)
+    second = await client.post("/v1/workflows", json=payload, headers=headers)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert second.json() == first.json()
+    assert len((await client.get("/v1/workflows")).json()) == 1
+    async with TestSession() as session:
+        persisted = await session.get(Workflow, first.json()["id"])
+        assert persisted is not None
+        assert persisted.idempotency_key == "workflow-request-123"
+
+
+async def test_workflow_creation_rejects_idempotency_key_reuse(client: AsyncClient) -> None:
+    headers = {"Idempotency-Key": "workflow-request-456"}
+    first = await client.post(
+        "/v1/workflows",
+        json={
+            "name": "Original",
+            "definition": {"steps": [{"key": "draft", "type": "llm"}]},
+        },
+        headers=headers,
+    )
+    conflict = await client.post(
+        "/v1/workflows",
+        json={
+            "name": "Changed",
+            "definition": {"steps": [{"key": "draft", "type": "llm"}]},
+        },
+        headers=headers,
+    )
+
+    assert first.status_code == 201
+    assert conflict.status_code == 409
+    assert conflict.json() == {"detail": {"code": "idempotency_key_reused"}}
+    assert [workflow["id"] for workflow in (await client.get("/v1/workflows")).json()] == [
+        first.json()["id"]
+    ]
+
+
+async def test_workflow_creation_idempotency_key_is_database_unique() -> None:
+    definition = {"steps": [{"key": "draft", "type": "llm"}]}
+    async with TestSession() as session:
+        session.add(Workflow(name="First", idempotency_key="database-key", definition=definition))
+        await session.commit()
+        session.add(Workflow(name="Second", idempotency_key="database-key", definition=definition))
+        with pytest.raises(IntegrityError):
+            await session.commit()
+
+
+async def test_workflow_creation_rejects_invalid_idempotency_key(client: AsyncClient) -> None:
+    payload = {
+        "name": "Invalid key",
+        "definition": {"steps": [{"key": "draft", "type": "llm"}]},
+    }
+
+    empty = await client.post("/v1/workflows", json=payload, headers={"Idempotency-Key": ""})
+    oversized = await client.post(
+        "/v1/workflows", json=payload, headers={"Idempotency-Key": "x" * 256}
+    )
+
+    assert empty.status_code == 422
+    assert oversized.status_code == 422
 
 
 async def test_list_workflows_filters_by_exact_name(client: AsyncClient) -> None:

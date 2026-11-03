@@ -129,6 +129,7 @@ Create a workflow:
 ```bash
 curl -X POST http://localhost:8000/v1/workflows \
   -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: reliable-writer-v1' \
   -d '{
     "name": "Reliable writer",
     "definition": {"max_runtime_seconds": 60, "max_total_tokens": 5000, "max_estimated_cost_usd": 1, "steps": [
@@ -137,6 +138,11 @@ curl -X POST http://localhost:8000/v1/workflows \
     ]}
   }'
 ```
+
+The optional workflow-creation `Idempotency-Key` is limited to 255 characters. Retrying the same
+payload with the same key returns the original workflow, including after concurrent requests; using
+that key with a different payload returns `409 idempotency_key_reused`. Omitting the header preserves
+ordinary non-idempotent creation.
 
 List all workflows with `GET /v1/workflows`, or use `?name=Reliable%20writer` for an exact,
 case-sensitive name lookup. The filter returns every matching workflow because names are labels,

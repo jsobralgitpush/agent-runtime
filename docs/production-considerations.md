@@ -5,6 +5,8 @@ v0.1 demonstrates production concerns but is not presented as a finished multi-t
 ## Already implemented
 
 - Database uniqueness is the source of truth for request idempotency.
+- Workflow authoring can use a database-enforced idempotency key and rejects key reuse with a
+  different payload.
 - Provider and tool implementations are allowlisted, not dynamically imported.
 - Workflow size, identifiers, retries, and timeouts have validation bounds.
 - Workflows can bound cumulative execution time, reported LLM token usage, and estimated cost.
@@ -71,6 +73,9 @@ intentionally exclude human waiting time.
 ### Authentication and tenancy
 
 Add authentication, tenant ownership columns, row-level authorization, rate limits, payload limits, and audit events. Every query must be scoped by tenant.
+Workflow-creation idempotency keys are globally unique only because the current runtime is
+single-tenant. A multi-tenant schema must replace that index with tenant-scoped uniqueness and must
+never treat a key as proof of access to the stored workflow.
 Workflow names are labels rather than authorization capabilities. Exact-name catalog lookup must
 remain tenant-scoped once ownership is introduced, and clients must use the returned workflow ID
 for later operations because multiple workflows may share a name.
