@@ -50,6 +50,12 @@ existing synchronous API remains backward compatible.
 
 `app/api.py` owns HTTP behavior only: validation, resource lookup, idempotent creation, and response serialization. It does not know provider-specific details.
 
+Workflow creation optionally accepts an `Idempotency-Key`. A unique database index makes the first
+committed request authoritative across API processes. Replays return the original workflow only
+when name, description, and normalized definition match; a different payload receives the stable
+`409 idempotency_key_reused` response. Extension preflight is skipped for valid replays so a later
+process-configuration change cannot make an already committed request non-repeatable.
+
 `GET /v1/health` is dependency-free process liveness. `GET /v1/ready` performs a minimal database
 round trip and returns a sanitized `503 database_unavailable` response when persistence cannot be
 reached. Readiness deliberately avoids provider calls and worker coordination, keeping probe cost

@@ -33,9 +33,11 @@ class RunStatus(StrEnum):
 
 class Workflow(Base):
     __tablename__ = "workflows"
+    __table_args__ = (Index("ix_workflows_idempotency_key", "idempotency_key", unique=True),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(120), index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     definition: Mapped[dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

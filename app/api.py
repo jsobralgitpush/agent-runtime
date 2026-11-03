@@ -96,6 +96,32 @@ def _validate_workflow_extensions(definition: WorkflowDefinition) -> None:
         )
 
 
+async def _get_workflow_by_idempotency_key(
+    session: AsyncSession,
+    idempotency_key: str,
+) -> Workflow | None:
+    workflow: Workflow | None = await session.scalar(
+        select(Workflow).where(Workflow.idempotency_key == idempotency_key)
+    )
+    return workflow
+
+
+def _resolve_workflow_creation_replay(
+    workflow: Workflow,
+    payload: WorkflowCreate,
+) -> Workflow:
+    if (
+        workflow.name != payload.name
+        or workflow.description != payload.description
+        or workflow.definition != payload.definition.model_dump(mode="json")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "idempotency_key_reused"},
+        )
+    return workflow
+
+
 @router.get("/health", response_model=HealthRead, tags=["operations"])
 async def health() -> HealthRead:
     return HealthRead()
@@ -141,15 +167,33 @@ async def validate_workflow(payload: WorkflowCreate) -> WorkflowValidationRead:
 
 
 @router.post("/workflows", response_model=WorkflowRead, status_code=status.HTTP_201_CREATED)
-async def create_workflow(payload: WorkflowCreate, session: Session) -> Workflow:
+async def create_workflow(
+    payload: WorkflowCreate,
+    session: Session,
+    idempotency_key: Annotated[str | None, Header(min_length=1, max_length=255)] = None,
+) -> Workflow:
+    if idempotency_key is not None:
+        existing = await _get_workflow_by_idempotency_key(session, idempotency_key)
+        if existing is not None:
+            return _resolve_workflow_creation_replay(existing, payload)
+
     _validate_workflow_extensions(payload.definition)
     workflow = Workflow(
         name=payload.name,
+        idempotency_key=idempotency_key,
         description=payload.description,
         definition=payload.definition.model_dump(mode="json"),
     )
     session.add(workflow)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        if idempotency_key is not None:
+            existing = await _get_workflow_by_idempotency_key(session, idempotency_key)
+            if existing is not None:
+                return _resolve_workflow_creation_replay(existing, payload)
+        raise
     await session.refresh(workflow)
     return workflow
 
