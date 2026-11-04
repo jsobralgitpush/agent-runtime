@@ -65,6 +65,12 @@ Workflow catalog listing accepts an optional exact, case-sensitive `name` filter
 existing workflow-name index and returns every match because display names are intentionally not
 unique. The unfiltered request preserves the original newest-first catalog behavior.
 
+Archiving adds a timestamp to an immutable workflow definition rather than deleting it. The archive
+endpoint and run creation both lock the workflow row, establishing a clear boundary under concurrent
+requests: a run commits before the archive, or it observes the archived state and is rejected. Runs
+already accepted keep executing, and an idempotent retry may still recover its original run. The
+catalog and direct lookup continue returning archived workflows with their timestamp.
+
 Workflow run history uses keyset pagination ordered by `(created_at, id)` descending. The last run
 ID in a non-final page is an opaque cursor: the API reloads that row, verifies that it belongs to
 the requested workflow, then queries strictly older rows. A composite database index on
@@ -116,7 +122,7 @@ processor.
 
 ### Domain and persistence
 
-`Workflow` stores the immutable definition used for new runs. `WorkflowRun` stores lifecycle state and final output. `StepRun` is both the audit trail and the unit of observability, including attempt count, latency, tokens, cost, and error.
+`Workflow` stores the immutable definition used for new runs plus its optional archive timestamp. `WorkflowRun` stores lifecycle state and final output. `StepRun` is both the audit trail and the unit of observability, including attempt count, latency, tokens, cost, and error.
 
 ### Execution engine
 

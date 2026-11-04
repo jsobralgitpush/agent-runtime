@@ -76,6 +76,9 @@ Add authentication, tenant ownership columns, row-level authorization, rate limi
 Workflow-creation idempotency keys are globally unique only because the current runtime is
 single-tenant. A multi-tenant schema must replace that index with tenant-scoped uniqueness and must
 never treat a key as proof of access to the stored workflow.
+Workflow archival preserves definitions and histories and therefore is not a data-retention or
+deletion control. Tenant authorization must protect the archive action, and retention policy must
+separately govern archived definitions, run payloads, and step telemetry.
 Workflow names are labels rather than authorization capabilities. Exact-name catalog lookup must
 remain tenant-scoped once ownership is introduced, and clients must use the returned workflow ID
 for later operations because multiple workflows may share a name.
