@@ -294,6 +294,53 @@ async def test_create_list_and_get_workflow(client: AsyncClient) -> None:
     assert listed.status_code == 200
     assert len(listed.json()) == 1
     assert fetched.json() == created
+    assert created["archived_at"] is None
+
+
+async def test_archive_workflow_blocks_new_runs_but_preserves_existing_work(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    run_url = f"/v1/workflows/{workflow['id']}/runs"
+    queued = await client.post(
+        run_url,
+        json={"inputs": {"topic": "already accepted"}},
+        headers={"Prefer": "respond-async", "Idempotency-Key": "accepted-before-archive"},
+    )
+    assert queued.status_code == 202
+
+    archived = await client.post(f"/v1/workflows/{workflow['id']}/archive")
+    repeated = await client.post(f"/v1/workflows/{workflow['id']}/archive")
+
+    assert archived.status_code == 200
+    assert archived.json()["archived_at"] is not None
+    assert repeated.status_code == 200
+    assert repeated.json()["archived_at"] == archived.json()["archived_at"]
+    assert (await client.get(f"/v1/workflows/{workflow['id']}")).json() == archived.json()
+
+    rejected = await client.post(run_url, json={"inputs": {"topic": "new work"}})
+    replayed = await client.post(
+        run_url,
+        json={"inputs": {"topic": "changed by retry"}},
+        headers={"Idempotency-Key": "accepted-before-archive"},
+    )
+
+    assert rejected.status_code == 409
+    assert rejected.json() == {"detail": {"code": "workflow_archived"}}
+    assert replayed.status_code == 201
+    assert replayed.json()["id"] == queued.json()["id"]
+    assert replayed.json()["inputs"] == {"topic": "already accepted"}
+
+    assert await run_worker_once(TestSession, Settings(app_env="test")) is True
+    completed = await client.get(f"/v1/runs/{queued.json()['id']}")
+    assert completed.json()["status"] == RunStatus.completed
+
+
+async def test_archive_workflow_rejects_missing_workflow(client: AsyncClient) -> None:
+    response = await client.post("/v1/workflows/not-found/archive")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Workflow not found"}
 
 
 async def test_workflow_creation_idempotency_returns_original(client: AsyncClient) -> None:

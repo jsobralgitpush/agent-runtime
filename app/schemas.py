@@ -202,6 +202,7 @@ class WorkflowRead(BaseModel):
     description: str | None
     definition: WorkflowDefinition
     created_at: datetime
+    archived_at: datetime | None
 
 
 class RunCreate(BaseModel):

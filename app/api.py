@@ -106,6 +106,16 @@ async def _get_workflow_by_idempotency_key(
     return workflow
 
 
+async def _get_workflow_for_update(
+    session: AsyncSession,
+    workflow_id: str,
+) -> Workflow | None:
+    workflow: Workflow | None = await session.scalar(
+        select(Workflow).where(Workflow.id == workflow_id).with_for_update()
+    )
+    return workflow
+
+
 def _resolve_workflow_creation_replay(
     workflow: Workflow,
     payload: WorkflowCreate,
@@ -215,6 +225,18 @@ async def get_workflow(workflow_id: str, session: Session) -> Workflow:
     workflow = await session.get(Workflow, workflow_id)
     if workflow is None:
         raise HTTPException(status_code=404, detail="Workflow not found")
+    return workflow
+
+
+@router.post("/workflows/{workflow_id}/archive", response_model=WorkflowRead)
+async def archive_workflow(workflow_id: str, session: Session) -> Workflow:
+    workflow = await _get_workflow_for_update(session, workflow_id)
+    if workflow is None:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    if workflow.archived_at is None:
+        workflow.archived_at = datetime.now(UTC)
+        await session.commit()
+        await session.refresh(workflow)
     return workflow
 
 
@@ -362,7 +384,7 @@ async def create_run(
     idempotency_key: Annotated[str | None, Header(max_length=255)] = None,
     prefer: Annotated[str | None, Header(max_length=255)] = None,
 ) -> WorkflowRun:
-    workflow = await session.get(Workflow, workflow_id)
+    workflow = await _get_workflow_for_update(session, workflow_id)
     if workflow is None:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
@@ -377,6 +399,12 @@ async def create_run(
         )
         if existing:
             return existing
+
+    if workflow.archived_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "workflow_archived"},
+        )
 
     defer = _prefers_async(prefer)
     run = WorkflowRun(

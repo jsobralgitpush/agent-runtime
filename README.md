@@ -148,6 +148,11 @@ List all workflows with `GET /v1/workflows`, or use `?name=Reliable%20writer` fo
 case-sensitive name lookup. The filter returns every matching workflow because names are labels,
 not unique identifiers; use the returned ID for subsequent operations.
 
+Archive an obsolete definition with `POST /v1/workflows/<workflow-id>/archive`. Archiving is
+idempotent, keeps the workflow and its run history visible, and blocks only new runs with
+`409 workflow_archived`. Runs accepted before the archive continue normally, and retrying one of
+their idempotency keys still returns the original run.
+
 Run it, replacing `<workflow-id>`:
 
 ```bash
@@ -361,6 +366,7 @@ across a worker crash and replay-safe recovery.
 | `POST` | `/v1/workflows` | Validate and persist a workflow |
 | `GET` | `/v1/workflows` | List workflows, optionally filtered by exact name |
 | `GET` | `/v1/workflows/{id}` | Inspect a workflow |
+| `POST` | `/v1/workflows/{id}/archive` | Archive a workflow and block new runs |
 | `GET` | `/v1/workflows/{id}/runs` | List and filter run history with cursor pagination |
 | `GET` | `/v1/workflows/{id}/runs/summary` | Count workflow runs by lifecycle status |
 | `POST` | `/v1/workflows/{id}/runs` | Execute a run, or enqueue it with `Prefer: respond-async` |
