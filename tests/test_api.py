@@ -441,9 +441,44 @@ async def test_list_workflows_filters_by_exact_name(client: AsyncClient) -> None
     assert (await client.get("/v1/workflows", params={"name": "Missing"})).json() == []
 
 
+async def test_list_workflows_filters_by_archive_state(client: AsyncClient) -> None:
+    first = await create_workflow(client)
+    second = await create_workflow(client)
+    active = await client.post(
+        "/v1/workflows",
+        json={
+            "name": "Active only",
+            "definition": {"steps": [{"key": "draft", "type": "llm"}]},
+        },
+    )
+    assert active.status_code == 201
+    for workflow in (first, second):
+        response = await client.post(f"/v1/workflows/{workflow['id']}/archive")
+        assert response.status_code == 200
+
+    archived = await client.get("/v1/workflows", params={"archived": "true"})
+    available = await client.get("/v1/workflows", params={"archived": "false"})
+    matching_name = await client.get(
+        "/v1/workflows",
+        params={"name": "Writer", "archived": "true"},
+    )
+
+    assert archived.status_code == 200
+    assert {workflow["id"] for workflow in archived.json()} == {first["id"], second["id"]}
+    assert all(workflow["archived_at"] is not None for workflow in archived.json())
+    assert available.json() == [active.json()]
+    assert {workflow["id"] for workflow in matching_name.json()} == {
+        first["id"],
+        second["id"],
+    }
+
+
 async def test_list_workflows_rejects_invalid_name_filter(client: AsyncClient) -> None:
     assert (await client.get("/v1/workflows", params={"name": ""})).status_code == 422
     assert (await client.get("/v1/workflows", params={"name": "x" * 121})).status_code == 422
+
+    invalid_archive_state = await client.get("/v1/workflows", params={"archived": "not-a-boolean"})
+    assert invalid_archive_state.status_code == 422
 
 
 async def test_summarize_workflow_runs_counts_statuses_without_loading_history(

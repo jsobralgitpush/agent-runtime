@@ -63,7 +63,9 @@ and external side effects bounded.
 
 Workflow catalog listing accepts an optional exact, case-sensitive `name` filter. It reuses the
 existing workflow-name index and returns every match because display names are intentionally not
-unique. The unfiltered request preserves the original newest-first catalog behavior.
+unique. An optional `archived` boolean applies `IS NULL` or `IS NOT NULL` to the archive timestamp
+and can be combined with the name predicate. The archive-state index bounds those catalog scans.
+Omitting both filters preserves the original newest-first catalog behavior.
 
 Archiving adds a timestamp to an immutable workflow definition rather than deleting it. The archive
 endpoint and run creation both lock the workflow row, establishing a clear boundary under concurrent

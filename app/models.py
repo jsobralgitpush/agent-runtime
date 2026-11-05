@@ -33,7 +33,10 @@ class RunStatus(StrEnum):
 
 class Workflow(Base):
     __tablename__ = "workflows"
-    __table_args__ = (Index("ix_workflows_idempotency_key", "idempotency_key", unique=True),)
+    __table_args__ = (
+        Index("ix_workflows_idempotency_key", "idempotency_key", unique=True),
+        Index("ix_workflows_archived_at", "archived_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(120), index=True)

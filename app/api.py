@@ -212,10 +212,15 @@ async def create_workflow(
 async def list_workflows(
     session: Session,
     name: Annotated[str | None, Query(min_length=1, max_length=120)] = None,
+    archived: bool | None = None,
 ) -> list[Workflow]:
     query = select(Workflow)
     if name is not None:
         query = query.where(Workflow.name == name)
+    if archived is True:
+        query = query.where(Workflow.archived_at.is_not(None))
+    elif archived is False:
+        query = query.where(Workflow.archived_at.is_(None))
     result = await session.scalars(query.order_by(Workflow.created_at.desc()))
     return list(result)
 
