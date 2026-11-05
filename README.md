@@ -146,7 +146,9 @@ ordinary non-idempotent creation.
 
 List all workflows with `GET /v1/workflows`, or use `?name=Reliable%20writer` for an exact,
 case-sensitive name lookup. The filter returns every matching workflow because names are labels,
-not unique identifiers; use the returned ID for subsequent operations.
+not unique identifiers; use the returned ID for subsequent operations. Add `archived=false` to list
+only workflows accepting new runs, or `archived=true` to inspect retired definitions. The archive
+filter can be combined with `name`; omitting it preserves the full catalog.
 
 Archive an obsolete definition with `POST /v1/workflows/<workflow-id>/archive`. Archiving is
 idempotent, keeps the workflow and its run history visible, and blocks only new runs with
@@ -364,7 +366,7 @@ across a worker crash and replay-safe recovery.
 | `GET` | `/v1/tools` | List allowlisted tool names available to this runtime |
 | `POST` | `/v1/workflows/validate` | Validate a workflow without persisting it |
 | `POST` | `/v1/workflows` | Validate and persist a workflow |
-| `GET` | `/v1/workflows` | List workflows, optionally filtered by exact name |
+| `GET` | `/v1/workflows` | List workflows, filtered by exact name or archive state |
 | `GET` | `/v1/workflows/{id}` | Inspect a workflow |
 | `POST` | `/v1/workflows/{id}/archive` | Archive a workflow and block new runs |
 | `GET` | `/v1/workflows/{id}/runs` | List and filter run history with cursor pagination |
