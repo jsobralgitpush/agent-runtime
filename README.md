@@ -148,7 +148,10 @@ List all workflows with `GET /v1/workflows`, or use `?name=Reliable%20writer` fo
 case-sensitive name lookup. The filter returns every matching workflow because names are labels,
 not unique identifiers; use the returned ID for subsequent operations. Add `archived=false` to list
 only workflows accepting new runs, or `archived=true` to inspect retired definitions. The archive
-filter can be combined with `name`; omitting it preserves the full catalog.
+filter can be combined with `name`; omitting it preserves the full catalog. Large catalogs can opt
+into keyset pagination with `limit=1..100`. When another page exists, the response includes its
+opaque workflow ID in `X-Next-Cursor`; pass that value as `cursor` together with `limit`. Omitting
+`limit` preserves the original unbounded list for existing clients.
 
 Archive an obsolete definition with `POST /v1/workflows/<workflow-id>/archive`. Archiving is
 idempotent, keeps the workflow and its run history visible, and blocks only new runs with
@@ -366,7 +369,7 @@ across a worker crash and replay-safe recovery.
 | `GET` | `/v1/tools` | List allowlisted tool names available to this runtime |
 | `POST` | `/v1/workflows/validate` | Validate a workflow without persisting it |
 | `POST` | `/v1/workflows` | Validate and persist a workflow |
-| `GET` | `/v1/workflows` | List workflows, filtered by exact name or archive state |
+| `GET` | `/v1/workflows` | List workflows with optional filters and cursor pagination |
 | `GET` | `/v1/workflows/{id}` | Inspect a workflow |
 | `POST` | `/v1/workflows/{id}/archive` | Archive a workflow and block new runs |
 | `GET` | `/v1/workflows/{id}/runs` | List and filter run history with cursor pagination |
