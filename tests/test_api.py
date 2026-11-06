@@ -481,6 +481,64 @@ async def test_list_workflows_rejects_invalid_name_filter(client: AsyncClient) -
     assert invalid_archive_state.status_code == 422
 
 
+async def test_list_workflows_supports_opt_in_cursor_pagination(client: AsyncClient) -> None:
+    for index in range(3):
+        response = await client.post(
+            "/v1/workflows",
+            json={
+                "name": "Paginated",
+                "description": str(index),
+                "definition": {"steps": [{"key": "draft", "type": "llm"}]},
+            },
+        )
+        assert response.status_code == 201
+
+    complete = await client.get(
+        "/v1/workflows",
+        params={"name": "Paginated", "archived": "false"},
+    )
+    expected_ids = [workflow["id"] for workflow in complete.json()]
+
+    first_page = await client.get(
+        "/v1/workflows",
+        params={"name": "Paginated", "archived": "false", "limit": 2},
+    )
+    next_cursor = first_page.headers.get("X-Next-Cursor")
+
+    assert first_page.status_code == 200
+    assert [workflow["id"] for workflow in first_page.json()] == expected_ids[:2]
+    assert next_cursor == expected_ids[1]
+
+    final_page = await client.get(
+        "/v1/workflows",
+        params={
+            "name": "Paginated",
+            "archived": "false",
+            "limit": 2,
+            "cursor": next_cursor,
+        },
+    )
+
+    assert final_page.status_code == 200
+    assert [workflow["id"] for workflow in final_page.json()] == expected_ids[2:]
+    assert "X-Next-Cursor" not in final_page.headers
+
+
+async def test_list_workflows_rejects_invalid_pagination(client: AsyncClient) -> None:
+    missing_limit = await client.get("/v1/workflows", params={"cursor": "missing"})
+    invalid_cursor = await client.get(
+        "/v1/workflows",
+        params={"limit": 20, "cursor": "missing"},
+    )
+
+    assert missing_limit.status_code == 422
+    assert missing_limit.json() == {"detail": {"code": "workflow_pagination_limit_required"}}
+    assert invalid_cursor.status_code == 422
+    assert invalid_cursor.json() == {"detail": {"code": "invalid_workflow_cursor"}}
+    assert (await client.get("/v1/workflows", params={"limit": 0})).status_code == 422
+    assert (await client.get("/v1/workflows", params={"limit": 101})).status_code == 422
+
+
 async def test_summarize_workflow_runs_counts_statuses_without_loading_history(
     client: AsyncClient,
 ) -> None:

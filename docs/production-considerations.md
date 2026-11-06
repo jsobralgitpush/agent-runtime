@@ -82,6 +82,10 @@ separately govern archived definitions, run payloads, and step telemetry.
 Archive-state catalog filters are convenience predicates, not an authorization boundary. A future
 tenant schema must apply tenant ownership before name and archive predicates and use tenant-leading
 indexes for bounded catalog access.
+Workflow catalog cursors are navigation tokens, not authorization credentials. Tenant ownership
+must be applied both when loading the cursor row and when selecting the next page before this API is
+exposed as a multi-tenant service. Browser deployments must expose `X-Next-Cursor` in their CORS
+policy when frontend code needs to paginate the catalog.
 Workflow names are labels rather than authorization capabilities. Exact-name catalog lookup must
 remain tenant-scoped once ownership is introduced, and clients must use the returned workflow ID
 for later operations because multiple workflows may share a name.

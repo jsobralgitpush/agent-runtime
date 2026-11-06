@@ -65,7 +65,9 @@ Workflow catalog listing accepts an optional exact, case-sensitive `name` filter
 existing workflow-name index and returns every match because display names are intentionally not
 unique. An optional `archived` boolean applies `IS NULL` or `IS NOT NULL` to the archive timestamp
 and can be combined with the name predicate. The archive-state index bounds those catalog scans.
-Omitting both filters preserves the original newest-first catalog behavior.
+Optional keyset pagination orders the catalog by `(created_at, id)` descending and returns the next
+exclusive workflow-ID cursor in an HTTP header. It composes with both filters and is enabled only
+when the client supplies a bounded `limit`; omitting `limit` preserves the original list response.
 
 Archiving adds a timestamp to an immutable workflow definition rather than deleting it. The archive
 endpoint and run creation both lock the workflow row, establishing a clear boundary under concurrent

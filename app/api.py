@@ -211,18 +211,65 @@ async def create_workflow(
 @router.get("/workflows", response_model=list[WorkflowRead])
 async def list_workflows(
     session: Session,
+    response: Response,
     name: Annotated[str | None, Query(min_length=1, max_length=120)] = None,
     archived: bool | None = None,
+    limit: Annotated[int | None, Query(ge=1, le=100)] = None,
+    cursor: Annotated[str | None, Query(max_length=36)] = None,
 ) -> list[Workflow]:
+    if cursor is not None and limit is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "workflow_pagination_limit_required"},
+        )
+
     query = select(Workflow)
+    is_sqlite = session.get_bind().dialect.name == "sqlite"
     if name is not None:
         query = query.where(Workflow.name == name)
     if archived is True:
         query = query.where(Workflow.archived_at.is_not(None))
     elif archived is False:
         query = query.where(Workflow.archived_at.is_(None))
-    result = await session.scalars(query.order_by(Workflow.created_at.desc()))
-    return list(result)
+    if cursor is not None:
+        cursor_workflow = await session.get(Workflow, cursor)
+        if cursor_workflow is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={"code": "invalid_workflow_cursor"},
+            )
+        if is_sqlite:
+            created_key = func.julianday(Workflow.created_at)
+            cursor_key = func.julianday(cursor_workflow.created_at)
+            query = query.where(
+                or_(
+                    created_key < cursor_key,
+                    and_(created_key == cursor_key, Workflow.id < cursor_workflow.id),
+                )
+            )
+        else:
+            query = query.where(
+                or_(
+                    Workflow.created_at < cursor_workflow.created_at,
+                    and_(
+                        Workflow.created_at == cursor_workflow.created_at,
+                        Workflow.id < cursor_workflow.id,
+                    ),
+                )
+            )
+
+    if is_sqlite:
+        query = query.order_by(func.julianday(Workflow.created_at).desc(), Workflow.id.desc())
+    else:
+        query = query.order_by(Workflow.created_at.desc(), Workflow.id.desc())
+    if limit is None:
+        return list(await session.scalars(query))
+
+    workflows = list(await session.scalars(query.limit(limit + 1)))
+    items = workflows[:limit]
+    if len(workflows) > limit:
+        response.headers["X-Next-Cursor"] = items[-1].id
+    return items
 
 
 @router.get("/workflows/{workflow_id}", response_model=WorkflowRead)
