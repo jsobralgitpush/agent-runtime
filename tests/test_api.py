@@ -1,10 +1,12 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi import HTTPException
 from httpx import AsyncClient
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api import restore_workflow
 from app.config import Settings
 from app.engine import WorkerLeaseLostError, assert_active_lease
 from app.metrics import METRICS_CONTENT_TYPE
@@ -341,6 +343,95 @@ async def test_archive_workflow_rejects_missing_workflow(client: AsyncClient) ->
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Workflow not found"}
+
+
+async def test_restore_workflow_reactivates_definition_and_preserves_history(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    run_url = f"/v1/workflows/{workflow['id']}/runs"
+    first_run = await client.post(run_url, json={"inputs": {"topic": "before restore"}})
+    assert first_run.status_code == 201
+
+    archived = await client.post(f"/v1/workflows/{workflow['id']}/archive")
+    rejected = await client.post(run_url, json={"inputs": {"topic": "while archived"}})
+    restored = await client.post(f"/v1/workflows/{workflow['id']}/restore")
+    repeated = await client.post(f"/v1/workflows/{workflow['id']}/restore")
+    second_run = await client.post(run_url, json={"inputs": {"topic": "after restore"}})
+
+    assert archived.json()["archived_at"] is not None
+    assert rejected.status_code == 409
+    assert restored.status_code == 200
+    assert restored.json() == workflow
+    assert repeated.json() == workflow
+    assert second_run.status_code == 201
+    assert second_run.json()["status"] == RunStatus.completed
+
+    history = await client.get(run_url)
+    assert {run["id"] for run in history.json()["items"]} == {
+        first_run.json()["id"],
+        second_run.json()["id"],
+    }
+    assert (await client.get("/v1/workflows", params={"archived": "true"})).json() == []
+    assert (await client.get("/v1/workflows", params={"archived": "false"})).json() == [workflow]
+
+
+async def test_restore_workflow_revalidates_extensions(client: AsyncClient) -> None:
+    archived_at = datetime.now(UTC)
+    async with TestSession() as session:
+        workflow = Workflow(
+            name="Unavailable provider",
+            definition={"steps": [{"key": "draft", "type": "llm", "provider": "missing-provider"}]},
+            archived_at=archived_at,
+        )
+        session.add(workflow)
+        await session.commit()
+        await session.refresh(workflow)
+        workflow_id = workflow.id
+
+    response = await client.post(f"/v1/workflows/{workflow_id}/restore")
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": {
+            "code": "unknown_workflow_extensions",
+            "unknown_providers": ["missing-provider"],
+            "unknown_tools": [],
+        }
+    }
+    fetched = await client.get(f"/v1/workflows/{workflow_id}")
+    assert fetched.json()["archived_at"] is not None
+
+
+async def test_restore_workflow_rejects_missing_workflow(client: AsyncClient) -> None:
+    response = await client.post("/v1/workflows/not-found/restore")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Workflow not found"}
+
+
+async def test_restore_workflow_transaction_is_idempotent() -> None:
+    async with TestSession() as session:
+        workflow = Workflow(
+            name="Restorable transaction",
+            definition={"steps": [{"key": "draft", "type": "llm"}]},
+            archived_at=datetime.now(UTC),
+        )
+        session.add(workflow)
+        await session.commit()
+        await session.refresh(workflow)
+
+        restored = await restore_workflow(workflow.id, session)
+        repeated = await restore_workflow(workflow.id, session)
+
+        assert restored.archived_at is None
+        assert repeated is restored
+        persisted = await session.get(Workflow, workflow.id)
+        assert persisted is not None
+        assert persisted.archived_at is None
+        with pytest.raises(HTTPException, match="Workflow not found") as error:
+            await restore_workflow("not-found", session)
+        assert error.value.status_code == 404
 
 
 async def test_workflow_creation_idempotency_returns_original(client: AsyncClient) -> None:

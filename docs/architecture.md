@@ -74,6 +74,10 @@ endpoint and run creation both lock the workflow row, establishing a clear bound
 requests: a run commits before the archive, or it observes the archived state and is rejected. Runs
 already accepted keep executing, and an idempotent retry may still recover its original run. The
 catalog and direct lookup continue returning archived workflows with their timestamp.
+Restoration takes the same workflow row lock, revalidates the immutable definition's provider and
+tool references against the current process registry, and clears only `archived_at`. This creates a
+deterministic boundary with run creation: restoration commits first and the run is accepted, or the
+run observes archived state and is rejected. Existing run records are never replayed or changed.
 
 Workflow run history uses keyset pagination ordered by `(created_at, id)` descending. The last run
 ID in a non-final page is an opaque cursor: the API reloads that row, verifies that it belongs to

@@ -1,5 +1,7 @@
 # ADR 045: Preserve history when archiving workflows
 
+Restoration policy is defined separately in ADR 048.
+
 ## Context
 
 Workflow definitions are immutable, but every persisted definition remains available for new runs
@@ -36,4 +38,4 @@ who may reactivate a definition and whether extensions should be revalidated.
   requests; SQLite remains appropriate for deterministic local development, not cross-process
   coordination.
 - Catalog clients must inspect `archived_at`; archival does not hide or delete a workflow.
-- Tenant authorization, restore policy, and retention/deletion remain separate work.
+- Tenant authorization and retention/deletion remain separate work.
