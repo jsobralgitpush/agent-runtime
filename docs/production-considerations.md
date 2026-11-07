@@ -79,6 +79,10 @@ never treat a key as proof of access to the stored workflow.
 Workflow archival preserves definitions and histories and therefore is not a data-retention or
 deletion control. Tenant authorization must protect the archive action, and retention policy must
 separately govern archived definitions, run payloads, and step telemetry.
+Restoration is also a privileged lifecycle action. Extension revalidation proves only that named
+providers and tools are registered in the restoring API process; it does not authorize the caller,
+probe provider health, or guarantee identical worker configuration. Use consistent deployments and
+tenant authorization before allowing archived definitions to accept new work again.
 Archive-state catalog filters are convenience predicates, not an authorization boundary. A future
 tenant schema must apply tenant ownership before name and archive predicates and use tenant-leading
 indexes for bounded catalog access.

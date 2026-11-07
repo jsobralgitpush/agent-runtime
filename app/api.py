@@ -292,6 +292,19 @@ async def archive_workflow(workflow_id: str, session: Session) -> Workflow:
     return workflow
 
 
+@router.post("/workflows/{workflow_id}/restore", response_model=WorkflowRead)
+async def restore_workflow(workflow_id: str, session: Session) -> Workflow:
+    workflow = await _get_workflow_for_update(session, workflow_id)
+    if workflow is None:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    if workflow.archived_at is not None:
+        _validate_workflow_extensions(WorkflowDefinition.model_validate(workflow.definition))
+        workflow.archived_at = None
+        await session.commit()
+        await session.refresh(workflow)
+    return workflow
+
+
 async def _get_run(session: AsyncSession, run_id: str) -> WorkflowRun | None:
     query = (
         select(WorkflowRun).where(WorkflowRun.id == run_id).options(selectinload(WorkflowRun.steps))
