@@ -1,5 +1,7 @@
 # ADR 048: Revalidate and restore archived workflows
 
+Lifecycle transition auditing is defined separately in ADR 049.
+
 ## Context
 
 Workflow archival deliberately preserves immutable definitions and run history, but it is currently

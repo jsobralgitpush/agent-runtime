@@ -159,6 +159,8 @@ idempotent, keeps the workflow and its run history visible, and blocks only new 
 their idempotency keys still returns the original run. Restore a definition with
 `POST /v1/workflows/<workflow-id>/restore`; restoration is idempotent, revalidates its provider and
 tool references against the current runtime, preserves existing history, and allows new runs.
+Inspect successful state transitions in chronological order with
+`GET /v1/workflows/<workflow-id>/lifecycle-events`. Idempotent no-ops do not create duplicate events.
 
 Run it, replacing `<workflow-id>`:
 
@@ -375,6 +377,7 @@ across a worker crash and replay-safe recovery.
 | `GET` | `/v1/workflows/{id}` | Inspect a workflow |
 | `POST` | `/v1/workflows/{id}/archive` | Archive a workflow and block new runs |
 | `POST` | `/v1/workflows/{id}/restore` | Revalidate and reactivate an archived workflow |
+| `GET` | `/v1/workflows/{id}/lifecycle-events` | Audit successful archive and restore transitions |
 | `GET` | `/v1/workflows/{id}/runs` | List and filter run history with cursor pagination |
 | `GET` | `/v1/workflows/{id}/runs/summary` | Count workflow runs by lifecycle status |
 | `POST` | `/v1/workflows/{id}/runs` | Execute a run, or enqueue it with `Prefer: respond-async` |

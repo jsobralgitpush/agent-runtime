@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models import RunStatus
+from app.models import RunStatus, WorkflowLifecycleAction
 
 STEP_KEY_PATTERN = r"^[a-z][a-z0-9_-]{0,79}$"
 ProviderTimeoutSeconds = Annotated[
@@ -203,6 +203,15 @@ class WorkflowRead(BaseModel):
     definition: WorkflowDefinition
     created_at: datetime
     archived_at: datetime | None
+
+
+class WorkflowLifecycleEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    workflow_id: str
+    action: WorkflowLifecycleAction
+    created_at: datetime
 
 
 class RunCreate(BaseModel):

@@ -78,6 +78,10 @@ Restoration takes the same workflow row lock, revalidates the immutable definiti
 tool references against the current process registry, and clears only `archived_at`. This creates a
 deterministic boundary with run creation: restoration commits first and the run is accepted, or the
 run observes archived state and is rejected. Existing run records are never replayed or changed.
+Every successful archive or restore transition appends an immutable lifecycle event in the same
+database transaction as the state change. Idempotent no-ops and failed validation append nothing.
+The event timestamp for archival is identical to `archived_at`, and chronological lookup uses a
+workflow-scoped composite index.
 
 Workflow run history uses keyset pagination ordered by `(created_at, id)` descending. The last run
 ID in a non-final page is an opaque cursor: the API reloads that row, verifies that it belongs to
