@@ -6,11 +6,17 @@ from httpx import AsyncClient
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api import restore_workflow
+from app.api import archive_workflow, list_workflow_lifecycle_events, restore_workflow
 from app.config import Settings
 from app.engine import WorkerLeaseLostError, assert_active_lease
 from app.metrics import METRICS_CONTENT_TYPE
-from app.models import RunStatus, StepRun, Workflow, WorkflowRun
+from app.models import (
+    RunStatus,
+    StepRun,
+    Workflow,
+    WorkflowLifecycleAction,
+    WorkflowRun,
+)
 from app.worker import (
     LEASE_EXPIRED_ERROR,
     claim_next_run,
@@ -319,6 +325,9 @@ async def test_archive_workflow_blocks_new_runs_but_preserves_existing_work(
     assert repeated.status_code == 200
     assert repeated.json()["archived_at"] == archived.json()["archived_at"]
     assert (await client.get(f"/v1/workflows/{workflow['id']}")).json() == archived.json()
+    events = await client.get(f"/v1/workflows/{workflow['id']}/lifecycle-events")
+    assert [event["action"] for event in events.json()] == ["archived"]
+    assert events.json()[0]["created_at"] == archived.json()["archived_at"]
 
     rejected = await client.post(run_url, json={"inputs": {"topic": "new work"}})
     replayed = await client.post(
@@ -366,6 +375,8 @@ async def test_restore_workflow_reactivates_definition_and_preserves_history(
     assert repeated.json() == workflow
     assert second_run.status_code == 201
     assert second_run.json()["status"] == RunStatus.completed
+    events = await client.get(f"/v1/workflows/{workflow['id']}/lifecycle-events")
+    assert [event["action"] for event in events.json()] == ["archived", "restored"]
 
     history = await client.get(run_url)
     assert {run["id"] for run in history.json()["items"]} == {
@@ -390,6 +401,7 @@ async def test_restore_workflow_revalidates_extensions(client: AsyncClient) -> N
         workflow_id = workflow.id
 
     response = await client.post(f"/v1/workflows/{workflow_id}/restore")
+    events = await client.get(f"/v1/workflows/{workflow_id}/lifecycle-events")
 
     assert response.status_code == 422
     assert response.json() == {
@@ -401,6 +413,8 @@ async def test_restore_workflow_revalidates_extensions(client: AsyncClient) -> N
     }
     fetched = await client.get(f"/v1/workflows/{workflow_id}")
     assert fetched.json()["archived_at"] is not None
+    assert events.status_code == 200
+    assert events.json() == []
 
 
 async def test_restore_workflow_rejects_missing_workflow(client: AsyncClient) -> None:
@@ -410,28 +424,45 @@ async def test_restore_workflow_rejects_missing_workflow(client: AsyncClient) ->
     assert response.json() == {"detail": "Workflow not found"}
 
 
-async def test_restore_workflow_transaction_is_idempotent() -> None:
+async def test_workflow_lifecycle_event_transaction_is_idempotent() -> None:
     async with TestSession() as session:
         workflow = Workflow(
-            name="Restorable transaction",
+            name="Audited lifecycle",
             definition={"steps": [{"key": "draft", "type": "llm"}]},
-            archived_at=datetime.now(UTC),
         )
         session.add(workflow)
         await session.commit()
         await session.refresh(workflow)
 
+        archived = await archive_workflow(workflow.id, session)
+        repeated_archive = await archive_workflow(workflow.id, session)
         restored = await restore_workflow(workflow.id, session)
         repeated = await restore_workflow(workflow.id, session)
+        events = await list_workflow_lifecycle_events(workflow.id, session)
 
+        assert archived is repeated_archive
         assert restored.archived_at is None
         assert repeated is restored
+        assert [event.action for event in events] == [
+            WorkflowLifecycleAction.archived,
+            WorkflowLifecycleAction.restored,
+        ]
         persisted = await session.get(Workflow, workflow.id)
         assert persisted is not None
         assert persisted.archived_at is None
         with pytest.raises(HTTPException, match="Workflow not found") as error:
             await restore_workflow("not-found", session)
         assert error.value.status_code == 404
+        with pytest.raises(HTTPException, match="Workflow not found") as event_error:
+            await list_workflow_lifecycle_events("not-found", session)
+        assert event_error.value.status_code == 404
+
+
+async def test_workflow_lifecycle_events_reject_missing_workflow(client: AsyncClient) -> None:
+    response = await client.get("/v1/workflows/not-found/lifecycle-events")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Workflow not found"}
 
 
 async def test_workflow_creation_idempotency_returns_original(client: AsyncClient) -> None:

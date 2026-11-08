@@ -11,7 +11,13 @@ from app.config import get_settings
 from app.database import get_session
 from app.engine import ApprovalStateError, WorkflowEngine
 from app.metrics import METRICS_CONTENT_TYPE, refresh_queue_metrics, render_metrics
-from app.models import RunStatus, Workflow, WorkflowRun
+from app.models import (
+    RunStatus,
+    Workflow,
+    WorkflowLifecycleAction,
+    WorkflowLifecycleEvent,
+    WorkflowRun,
+)
 from app.providers import build_provider_registry
 from app.schemas import (
     ApprovalDecision,
@@ -24,6 +30,7 @@ from app.schemas import (
     ToolRead,
     WorkflowCreate,
     WorkflowDefinition,
+    WorkflowLifecycleEventRead,
     WorkflowRead,
     WorkflowRunPage,
     WorkflowRunSummary,
@@ -286,7 +293,15 @@ async def archive_workflow(workflow_id: str, session: Session) -> Workflow:
     if workflow is None:
         raise HTTPException(status_code=404, detail="Workflow not found")
     if workflow.archived_at is None:
-        workflow.archived_at = datetime.now(UTC)
+        archived_at = datetime.now(UTC)
+        workflow.archived_at = archived_at
+        session.add(
+            WorkflowLifecycleEvent(
+                workflow_id=workflow.id,
+                action=WorkflowLifecycleAction.archived,
+                created_at=archived_at,
+            )
+        )
         await session.commit()
         await session.refresh(workflow)
     return workflow
@@ -300,9 +315,34 @@ async def restore_workflow(workflow_id: str, session: Session) -> Workflow:
     if workflow.archived_at is not None:
         _validate_workflow_extensions(WorkflowDefinition.model_validate(workflow.definition))
         workflow.archived_at = None
+        session.add(
+            WorkflowLifecycleEvent(
+                workflow_id=workflow.id,
+                action=WorkflowLifecycleAction.restored,
+                created_at=datetime.now(UTC),
+            )
+        )
         await session.commit()
         await session.refresh(workflow)
     return workflow
+
+
+@router.get(
+    "/workflows/{workflow_id}/lifecycle-events",
+    response_model=list[WorkflowLifecycleEventRead],
+)
+async def list_workflow_lifecycle_events(
+    workflow_id: str,
+    session: Session,
+) -> list[WorkflowLifecycleEvent]:
+    if await session.get(Workflow, workflow_id) is None:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    events = await session.scalars(
+        select(WorkflowLifecycleEvent)
+        .where(WorkflowLifecycleEvent.workflow_id == workflow_id)
+        .order_by(WorkflowLifecycleEvent.created_at, WorkflowLifecycleEvent.id)
+    )
+    return list(events)
 
 
 async def _get_run(session: AsyncSession, run_id: str) -> WorkflowRun | None:

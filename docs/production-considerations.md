@@ -83,6 +83,11 @@ Restoration is also a privileged lifecycle action. Extension revalidation proves
 providers and tools are registered in the restoring API process; it does not authorize the caller,
 probe provider health, or guarantee identical worker configuration. Use consistent deployments and
 tenant authorization before allowing archived definitions to accept new work again.
+Lifecycle events record the transition type and timestamp, but not an actor, request identity, or
+reason because those concepts do not exist in the current single-tenant API. Treat the log as state
+history rather than a complete security audit trail until authentication and tenant ownership add
+trusted actor attribution. Events predating migration 0013 cannot be reconstructed and are not
+backfilled.
 Archive-state catalog filters are convenience predicates, not an authorization boundary. A future
 tenant schema must apply tenant ownership before name and archive predicates and use tenant-leading
 indexes for bounded catalog access.

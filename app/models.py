@@ -31,6 +31,11 @@ class RunStatus(StrEnum):
     failed = "failed"
 
 
+class WorkflowLifecycleAction(StrEnum):
+    archived = "archived"
+    restored = "restored"
+
+
 class Workflow(Base):
     __tablename__ = "workflows"
     __table_args__ = (
@@ -48,6 +53,30 @@ class Workflow(Base):
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     runs: Mapped[list["WorkflowRun"]] = relationship(back_populates="workflow")
+
+
+class WorkflowLifecycleEvent(Base):
+    __tablename__ = "workflow_lifecycle_events"
+    __table_args__ = (
+        Index(
+            "ix_workflow_lifecycle_events_workflow_created_id",
+            "workflow_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    workflow_id: Mapped[str] = mapped_column(ForeignKey("workflows.id", ondelete="CASCADE"))
+    action: Mapped[WorkflowLifecycleAction] = mapped_column(
+        Enum(
+            WorkflowLifecycleAction,
+            native_enum=False,
+            create_constraint=True,
+            name="workflowlifecycleaction",
+        )
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class WorkflowRun(Base):
