@@ -1,8 +1,9 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +16,7 @@ from app.models import (
     StepRun,
     Workflow,
     WorkflowLifecycleAction,
+    WorkflowLifecycleEvent,
     WorkflowRun,
 )
 from app.worker import (
@@ -438,7 +440,13 @@ async def test_workflow_lifecycle_event_transaction_is_idempotent() -> None:
         repeated_archive = await archive_workflow(workflow.id, session)
         restored = await restore_workflow(workflow.id, session)
         repeated = await restore_workflow(workflow.id, session)
-        events = await list_workflow_lifecycle_events(workflow.id, session)
+        events = await list_workflow_lifecycle_events(
+            workflow.id,
+            session,
+            Response(),
+            limit=None,
+            cursor=None,
+        )
 
         assert archived is repeated_archive
         assert restored.archived_at is None
@@ -447,6 +455,24 @@ async def test_workflow_lifecycle_event_transaction_is_idempotent() -> None:
             WorkflowLifecycleAction.archived,
             WorkflowLifecycleAction.restored,
         ]
+        first_response = Response()
+        first_page = await list_workflow_lifecycle_events(
+            workflow.id,
+            session,
+            first_response,
+            limit=1,
+            cursor=None,
+        )
+        second_response = Response()
+        second_page = await list_workflow_lifecycle_events(
+            workflow.id,
+            session,
+            second_response,
+            limit=1,
+            cursor=first_response.headers["X-Next-Cursor"],
+        )
+        assert first_page + second_page == events
+        assert "X-Next-Cursor" not in second_response.headers
         persisted = await session.get(Workflow, workflow.id)
         assert persisted is not None
         assert persisted.archived_at is None
@@ -454,7 +480,13 @@ async def test_workflow_lifecycle_event_transaction_is_idempotent() -> None:
             await restore_workflow("not-found", session)
         assert error.value.status_code == 404
         with pytest.raises(HTTPException, match="Workflow not found") as event_error:
-            await list_workflow_lifecycle_events("not-found", session)
+            await list_workflow_lifecycle_events(
+                "not-found",
+                session,
+                Response(),
+                limit=None,
+                cursor=None,
+            )
         assert event_error.value.status_code == 404
 
 
@@ -463,6 +495,68 @@ async def test_workflow_lifecycle_events_reject_missing_workflow(client: AsyncCl
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Workflow not found"}
+
+
+async def test_workflow_lifecycle_events_support_opt_in_cursor_pagination(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    lifecycle_url = f"/v1/workflows/{workflow['id']}/lifecycle-events"
+    for _ in range(2):
+        assert (await client.post(f"/v1/workflows/{workflow['id']}/archive")).status_code == 200
+        assert (await client.post(f"/v1/workflows/{workflow['id']}/restore")).status_code == 200
+
+    async with TestSession() as session:
+        events = list(
+            await session.scalars(
+                select(WorkflowLifecycleEvent).where(
+                    WorkflowLifecycleEvent.workflow_id == workflow["id"]
+                )
+            )
+        )
+        shared_timestamp = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+        for event in events:
+            event.created_at = shared_timestamp
+        await session.commit()
+
+    unbounded = await client.get(lifecycle_url)
+    first = await client.get(lifecycle_url, params={"limit": 2})
+    cursor = first.headers["X-Next-Cursor"]
+    second = await client.get(lifecycle_url, params={"limit": 2, "cursor": cursor})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert "X-Next-Cursor" not in unbounded.headers
+    assert "X-Next-Cursor" not in second.headers
+    assert first.json() + second.json() == unbounded.json()
+    assert len({event["id"] for event in first.json() + second.json()}) == 4
+
+
+async def test_workflow_lifecycle_event_pagination_rejects_invalid_cursors(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    other_workflow = await create_workflow(client)
+    lifecycle_url = f"/v1/workflows/{workflow['id']}/lifecycle-events"
+    await client.post(f"/v1/workflows/{other_workflow['id']}/archive")
+    other_events = await client.get(f"/v1/workflows/{other_workflow['id']}/lifecycle-events")
+    other_cursor = other_events.json()[0]["id"]
+
+    missing_limit = await client.get(lifecycle_url, params={"cursor": "unknown"})
+    unknown = await client.get(lifecycle_url, params={"limit": 10, "cursor": "unknown"})
+    wrong_workflow = await client.get(
+        lifecycle_url,
+        params={"limit": 10, "cursor": other_cursor},
+    )
+
+    assert missing_limit.status_code == 422
+    assert missing_limit.json() == {
+        "detail": {"code": "workflow_lifecycle_event_pagination_limit_required"}
+    }
+    assert unknown.status_code == 422
+    assert unknown.json() == {"detail": {"code": "invalid_workflow_lifecycle_event_cursor"}}
+    assert wrong_workflow.status_code == 422
+    assert wrong_workflow.json() == unknown.json()
 
 
 async def test_workflow_creation_idempotency_returns_original(client: AsyncClient) -> None:

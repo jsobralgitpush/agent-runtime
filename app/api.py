@@ -334,15 +334,68 @@ async def restore_workflow(workflow_id: str, session: Session) -> Workflow:
 async def list_workflow_lifecycle_events(
     workflow_id: str,
     session: Session,
+    response: Response,
+    limit: Annotated[int | None, Query(ge=1, le=100)] = None,
+    cursor: Annotated[str | None, Query(max_length=36)] = None,
 ) -> list[WorkflowLifecycleEvent]:
+    if cursor is not None and limit is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "workflow_lifecycle_event_pagination_limit_required"},
+        )
     if await session.get(Workflow, workflow_id) is None:
         raise HTTPException(status_code=404, detail="Workflow not found")
-    events = await session.scalars(
-        select(WorkflowLifecycleEvent)
-        .where(WorkflowLifecycleEvent.workflow_id == workflow_id)
-        .order_by(WorkflowLifecycleEvent.created_at, WorkflowLifecycleEvent.id)
-    )
-    return list(events)
+
+    query = select(WorkflowLifecycleEvent).where(WorkflowLifecycleEvent.workflow_id == workflow_id)
+    is_sqlite = session.get_bind().dialect.name == "sqlite"
+    if cursor is not None:
+        cursor_event = await session.get(WorkflowLifecycleEvent, cursor)
+        if cursor_event is None or cursor_event.workflow_id != workflow_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={"code": "invalid_workflow_lifecycle_event_cursor"},
+            )
+        if is_sqlite:
+            created_key = func.julianday(WorkflowLifecycleEvent.created_at)
+            cursor_key = func.julianday(cursor_event.created_at)
+            query = query.where(
+                or_(
+                    created_key > cursor_key,
+                    and_(
+                        created_key == cursor_key,
+                        WorkflowLifecycleEvent.id > cursor_event.id,
+                    ),
+                )
+            )
+        else:
+            query = query.where(
+                or_(
+                    WorkflowLifecycleEvent.created_at > cursor_event.created_at,
+                    and_(
+                        WorkflowLifecycleEvent.created_at == cursor_event.created_at,
+                        WorkflowLifecycleEvent.id > cursor_event.id,
+                    ),
+                )
+            )
+
+    if is_sqlite:
+        query = query.order_by(
+            func.julianday(WorkflowLifecycleEvent.created_at),
+            WorkflowLifecycleEvent.id,
+        )
+    else:
+        query = query.order_by(
+            WorkflowLifecycleEvent.created_at,
+            WorkflowLifecycleEvent.id,
+        )
+    if limit is None:
+        return list(await session.scalars(query))
+
+    events = list(await session.scalars(query.limit(limit + 1)))
+    items = events[:limit]
+    if len(events) > limit:
+        response.headers["X-Next-Cursor"] = items[-1].id
+    return items
 
 
 async def _get_run(session: AsyncSession, run_id: str) -> WorkflowRun | None:
