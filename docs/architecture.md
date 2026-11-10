@@ -81,7 +81,9 @@ run observes archived state and is rejected. Existing run records are never repl
 Every successful archive or restore transition appends an immutable lifecycle event in the same
 database transaction as the state change. Idempotent no-ops and failed validation append nothing.
 The event timestamp for archival is identical to `archived_at`, and chronological lookup uses a
-workflow-scoped composite index.
+workflow-scoped composite index. Optional keyset pagination follows `(created_at, id)` ascending,
+fetches one extra row, and returns the last emitted event ID in `X-Next-Cursor`; the compatibility
+path without `limit` continues returning the complete history.
 
 Workflow run history uses keyset pagination ordered by `(created_at, id)` descending. The last run
 ID in a non-final page is an opaque cursor: the API reloads that row, verifies that it belongs to

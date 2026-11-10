@@ -31,5 +31,4 @@ request identity exist.
 - The log is lifecycle history, not a complete security audit trail without trusted actor context.
 - Migration 0013 does not backfill earlier transitions because a current timestamp cannot reveal
   when or how many times a workflow changed state.
-- Event listing is intentionally unpaginated because lifecycle transitions are low-volume operator
-  actions; pagination remains a follow-up if measured histories become large.
+- Event listing pagination is defined separately in ADR 050.

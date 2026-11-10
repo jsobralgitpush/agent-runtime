@@ -88,6 +88,9 @@ reason because those concepts do not exist in the current single-tenant API. Tre
 history rather than a complete security audit trail until authentication and tenant ownership add
 trusted actor attribution. Events predating migration 0013 cannot be reconstructed and are not
 backfilled.
+Lifecycle event pagination cursors are navigation tokens, not authorization credentials. Future
+tenant ownership must scope both the workflow and cursor event lookup. Browser clients must expose
+`X-Next-Cursor` through CORS before they can follow bounded history pages.
 Archive-state catalog filters are convenience predicates, not an authorization boundary. A future
 tenant schema must apply tenant ownership before name and archive predicates and use tenant-leading
 indexes for bounded catalog access.
