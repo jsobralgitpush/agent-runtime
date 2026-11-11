@@ -64,6 +64,13 @@ class WorkflowLifecycleEvent(Base):
             "created_at",
             "id",
         ),
+        Index(
+            "ix_workflow_lifecycle_events_workflow_action_created_id",
+            "workflow_id",
+            "action",
+            "created_at",
+            "id",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))

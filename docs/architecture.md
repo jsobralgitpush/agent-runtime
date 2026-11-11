@@ -83,7 +83,9 @@ database transaction as the state change. Idempotent no-ops and failed validatio
 The event timestamp for archival is identical to `archived_at`, and chronological lookup uses a
 workflow-scoped composite index. Optional keyset pagination follows `(created_at, id)` ascending,
 fetches one extra row, and returns the last emitted event ID in `X-Next-Cursor`; the compatibility
-path without `limit` continues returning the complete history.
+path without `limit` continues returning the complete history. An optional action predicate selects
+only archive or restore transitions and uses `(workflow_id, action, created_at, id)` for bounded,
+ordered access.
 
 Workflow run history uses keyset pagination ordered by `(created_at, id)` descending. The last run
 ID in a non-final page is an opaque cursor: the API reloads that row, verifies that it belongs to
