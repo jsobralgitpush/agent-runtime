@@ -335,6 +335,7 @@ async def list_workflow_lifecycle_events(
     workflow_id: str,
     session: Session,
     response: Response,
+    action: WorkflowLifecycleAction | None = None,
     limit: Annotated[int | None, Query(ge=1, le=100)] = None,
     cursor: Annotated[str | None, Query(max_length=36)] = None,
 ) -> list[WorkflowLifecycleEvent]:
@@ -347,6 +348,8 @@ async def list_workflow_lifecycle_events(
         raise HTTPException(status_code=404, detail="Workflow not found")
 
     query = select(WorkflowLifecycleEvent).where(WorkflowLifecycleEvent.workflow_id == workflow_id)
+    if action is not None:
+        query = query.where(WorkflowLifecycleEvent.action == action)
     is_sqlite = session.get_bind().dialect.name == "sqlite"
     if cursor is not None:
         cursor_event = await session.get(WorkflowLifecycleEvent, cursor)

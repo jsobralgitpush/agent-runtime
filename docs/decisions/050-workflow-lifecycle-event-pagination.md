@@ -36,3 +36,4 @@ JSON list and emit no cursor.
 - Cursor IDs are navigation tokens, not proof of access; future tenant authorization must scope the
   workflow lookup, cursor lookup, and page predicate.
 - The existing composite index supports this query, so no schema migration is required.
+- Action filtering and its access path are defined separately in ADR 051.

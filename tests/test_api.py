@@ -444,6 +444,7 @@ async def test_workflow_lifecycle_event_transaction_is_idempotent() -> None:
             workflow.id,
             session,
             Response(),
+            action=None,
             limit=None,
             cursor=None,
         )
@@ -460,6 +461,7 @@ async def test_workflow_lifecycle_event_transaction_is_idempotent() -> None:
             workflow.id,
             session,
             first_response,
+            action=None,
             limit=1,
             cursor=None,
         )
@@ -468,11 +470,21 @@ async def test_workflow_lifecycle_event_transaction_is_idempotent() -> None:
             workflow.id,
             session,
             second_response,
+            action=None,
             limit=1,
             cursor=first_response.headers["X-Next-Cursor"],
         )
         assert first_page + second_page == events
         assert "X-Next-Cursor" not in second_response.headers
+        archived_events = await list_workflow_lifecycle_events(
+            workflow.id,
+            session,
+            Response(),
+            action=WorkflowLifecycleAction.archived,
+            limit=None,
+            cursor=None,
+        )
+        assert [event.action for event in archived_events] == [WorkflowLifecycleAction.archived]
         persisted = await session.get(Workflow, workflow.id)
         assert persisted is not None
         assert persisted.archived_at is None
@@ -484,6 +496,7 @@ async def test_workflow_lifecycle_event_transaction_is_idempotent() -> None:
                 "not-found",
                 session,
                 Response(),
+                action=None,
                 limit=None,
                 cursor=None,
             )
@@ -557,6 +570,35 @@ async def test_workflow_lifecycle_event_pagination_rejects_invalid_cursors(
     assert unknown.json() == {"detail": {"code": "invalid_workflow_lifecycle_event_cursor"}}
     assert wrong_workflow.status_code == 422
     assert wrong_workflow.json() == unknown.json()
+
+
+async def test_workflow_lifecycle_events_filter_by_action_and_paginate(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    lifecycle_url = f"/v1/workflows/{workflow['id']}/lifecycle-events"
+    for _ in range(3):
+        await client.post(f"/v1/workflows/{workflow['id']}/archive")
+        await client.post(f"/v1/workflows/{workflow['id']}/restore")
+
+    archived = await client.get(lifecycle_url, params={"action": "archived"})
+    restored = await client.get(lifecycle_url, params={"action": "restored"})
+    first = await client.get(lifecycle_url, params={"action": "archived", "limit": 2})
+    second = await client.get(
+        lifecycle_url,
+        params={
+            "action": "archived",
+            "limit": 2,
+            "cursor": first.headers["X-Next-Cursor"],
+        },
+    )
+    invalid = await client.get(lifecycle_url, params={"action": "deleted"})
+
+    assert [event["action"] for event in archived.json()] == ["archived"] * 3
+    assert [event["action"] for event in restored.json()] == ["restored"] * 3
+    assert first.json() + second.json() == archived.json()
+    assert "X-Next-Cursor" not in second.headers
+    assert invalid.status_code == 422
 
 
 async def test_workflow_creation_idempotency_returns_original(client: AsyncClient) -> None:

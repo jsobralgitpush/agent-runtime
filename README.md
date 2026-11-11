@@ -162,7 +162,9 @@ tool references against the current runtime, preserves existing history, and all
 Inspect successful state transitions in chronological order with
 `GET /v1/workflows/<workflow-id>/lifecycle-events`. Idempotent no-ops do not create duplicate events.
 Long histories can opt into keyset pagination with `limit=1..100`; follow `X-Next-Cursor` by passing
-it as `cursor` together with a limit. Omitting `limit` preserves the complete list response.
+it as `cursor` together with a limit. Use `action=archived` or `action=restored` to select one
+transition type; the filter composes with pagination. Omitting `limit` preserves the complete list
+response.
 
 Run it, replacing `<workflow-id>`:
 
@@ -379,7 +381,7 @@ across a worker crash and replay-safe recovery.
 | `GET` | `/v1/workflows/{id}` | Inspect a workflow |
 | `POST` | `/v1/workflows/{id}/archive` | Archive a workflow and block new runs |
 | `POST` | `/v1/workflows/{id}/restore` | Revalidate and reactivate an archived workflow |
-| `GET` | `/v1/workflows/{id}/lifecycle-events` | Audit transitions with optional cursor pagination |
+| `GET` | `/v1/workflows/{id}/lifecycle-events` | Filter and paginate lifecycle transitions |
 | `GET` | `/v1/workflows/{id}/runs` | List and filter run history with cursor pagination |
 | `GET` | `/v1/workflows/{id}/runs/summary` | Count workflow runs by lifecycle status |
 | `POST` | `/v1/workflows/{id}/runs` | Execute a run, or enqueue it with `Prefer: respond-async` |
