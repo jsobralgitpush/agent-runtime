@@ -47,14 +47,18 @@ def _prefers_async(value: str | None) -> bool:
     return bool(value and "respond-async" in {item.strip().lower() for item in value.split(",")})
 
 
-def _normalize_history_bound(value: datetime | None, field: str) -> datetime | None:
+def _normalize_history_bound(
+    value: datetime | None,
+    field: str,
+    error_code: str = "invalid_run_time_range",
+) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None or value.utcoffset() is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
-                "code": "invalid_run_time_range",
+                "code": error_code,
                 "reason": "timezone_required",
                 "field": field,
             },
@@ -67,12 +71,13 @@ def _validate_history_range(
     upper: datetime | None,
     lower_field: str,
     upper_field: str,
+    error_code: str = "invalid_run_time_range",
 ) -> None:
     if lower is not None and upper is not None and lower >= upper:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
-                "code": "invalid_run_time_range",
+                "code": error_code,
                 "reason": f"{lower_field}_must_precede_{upper_field}",
             },
         )
@@ -336,9 +341,21 @@ async def list_workflow_lifecycle_events(
     session: Session,
     response: Response,
     action: WorkflowLifecycleAction | None = None,
+    created_from: datetime | None = None,
+    created_before: datetime | None = None,
     limit: Annotated[int | None, Query(ge=1, le=100)] = None,
     cursor: Annotated[str | None, Query(max_length=36)] = None,
 ) -> list[WorkflowLifecycleEvent]:
+    time_range_error = "invalid_workflow_lifecycle_event_time_range"
+    created_from = _normalize_history_bound(created_from, "created_from", time_range_error)
+    created_before = _normalize_history_bound(created_before, "created_before", time_range_error)
+    _validate_history_range(
+        created_from,
+        created_before,
+        "created_from",
+        "created_before",
+        time_range_error,
+    )
     if cursor is not None and limit is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -351,6 +368,17 @@ async def list_workflow_lifecycle_events(
     if action is not None:
         query = query.where(WorkflowLifecycleEvent.action == action)
     is_sqlite = session.get_bind().dialect.name == "sqlite"
+    if is_sqlite:
+        created_key = func.julianday(WorkflowLifecycleEvent.created_at)
+        if created_from is not None:
+            query = query.where(created_key >= func.julianday(created_from))
+        if created_before is not None:
+            query = query.where(created_key < func.julianday(created_before))
+    else:
+        if created_from is not None:
+            query = query.where(WorkflowLifecycleEvent.created_at >= created_from)
+        if created_before is not None:
+            query = query.where(WorkflowLifecycleEvent.created_at < created_before)
     if cursor is not None:
         cursor_event = await session.get(WorkflowLifecycleEvent, cursor)
         if cursor_event is None or cursor_event.workflow_id != workflow_id:
@@ -359,7 +387,6 @@ async def list_workflow_lifecycle_events(
                 detail={"code": "invalid_workflow_lifecycle_event_cursor"},
             )
         if is_sqlite:
-            created_key = func.julianday(WorkflowLifecycleEvent.created_at)
             cursor_key = func.julianday(cursor_event.created_at)
             query = query.where(
                 or_(
