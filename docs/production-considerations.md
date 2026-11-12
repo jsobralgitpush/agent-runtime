@@ -92,6 +92,8 @@ Lifecycle event pagination cursors are navigation tokens, not authorization cred
 tenant ownership must scope both the workflow and cursor event lookup. Browser clients must expose
 `X-Next-Cursor` through CORS before they can follow bounded history pages.
 Lifecycle action filters are operational selectors, not authorization or retention boundaries.
+Lifecycle time bounds require explicit RFC 3339 timezone offsets and are query constraints rather
+than retention controls.
 Archive-state catalog filters are convenience predicates, not an authorization boundary. A future
 tenant schema must apply tenant ownership before name and archive predicates and use tenant-leading
 indexes for bounded catalog access.

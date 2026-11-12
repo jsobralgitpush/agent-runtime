@@ -85,7 +85,9 @@ workflow-scoped composite index. Optional keyset pagination follows `(created_at
 fetches one extra row, and returns the last emitted event ID in `X-Next-Cursor`; the compatibility
 path without `limit` continues returning the complete history. An optional action predicate selects
 only archive or restore transitions and uses `(workflow_id, action, created_at, id)` for bounded,
-ordered access.
+ordered access. Time filtering accepts a timezone-aware, half-open
+`[created_from, created_before)` interval, normalizes bounds to UTC, and applies them before cursor
+traversal. Existing chronological indexes serve both filtered access paths.
 
 Workflow run history uses keyset pagination ordered by `(created_at, id)` descending. The last run
 ID in a non-final page is an opaque cursor: the API reloads that row, verifies that it belongs to

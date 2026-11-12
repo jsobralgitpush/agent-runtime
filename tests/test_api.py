@@ -601,6 +601,93 @@ async def test_workflow_lifecycle_events_filter_by_action_and_paginate(
     assert invalid.status_code == 422
 
 
+async def test_workflow_lifecycle_events_filter_by_creation_time_and_paginate(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    lifecycle_url = f"/v1/workflows/{workflow['id']}/lifecycle-events"
+    for _ in range(3):
+        await client.post(f"/v1/workflows/{workflow['id']}/archive")
+        await client.post(f"/v1/workflows/{workflow['id']}/restore")
+
+    base_time = datetime(2026, 1, 2, tzinfo=UTC)
+    async with TestSession() as session:
+        events = list(
+            await session.scalars(
+                select(WorkflowLifecycleEvent)
+                .where(WorkflowLifecycleEvent.workflow_id == workflow["id"])
+                .order_by(WorkflowLifecycleEvent.created_at, WorkflowLifecycleEvent.id)
+            )
+        )
+        for offset, event in enumerate(events):
+            event.created_at = base_time + timedelta(minutes=offset)
+        await session.commit()
+
+    bounds = {
+        "created_from": "2026-01-02T01:01:00+01:00",
+        "created_before": "2026-01-02T00:05:00Z",
+    }
+    bounded = await client.get(lifecycle_url, params=bounds)
+    first = await client.get(
+        lifecycle_url,
+        params={**bounds, "action": "archived", "limit": 1},
+    )
+    second = await client.get(
+        lifecycle_url,
+        params={
+            **bounds,
+            "action": "archived",
+            "limit": 1,
+            "cursor": first.headers["X-Next-Cursor"],
+        },
+    )
+
+    assert [event["action"] for event in bounded.json()] == [
+        "restored",
+        "archived",
+        "restored",
+        "archived",
+    ]
+    assert first.json() + second.json() == [
+        event for event in bounded.json() if event["action"] == "archived"
+    ]
+    assert "X-Next-Cursor" not in second.headers
+
+
+async def test_workflow_lifecycle_event_time_filter_rejects_invalid_ranges(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    lifecycle_url = f"/v1/workflows/{workflow['id']}/lifecycle-events"
+    reversed_range = await client.get(
+        lifecycle_url,
+        params={
+            "created_from": "2026-01-02T00:05:00Z",
+            "created_before": "2026-01-02T00:01:00Z",
+        },
+    )
+    naive_bound = await client.get(
+        lifecycle_url,
+        params={"created_from": "2026-01-02T00:01:00"},
+    )
+
+    assert reversed_range.status_code == 422
+    assert reversed_range.json() == {
+        "detail": {
+            "code": "invalid_workflow_lifecycle_event_time_range",
+            "reason": "created_from_must_precede_created_before",
+        }
+    }
+    assert naive_bound.status_code == 422
+    assert naive_bound.json() == {
+        "detail": {
+            "code": "invalid_workflow_lifecycle_event_time_range",
+            "reason": "timezone_required",
+            "field": "created_from",
+        }
+    }
+
+
 async def test_workflow_creation_idempotency_returns_original(client: AsyncClient) -> None:
     payload = {
         "name": "Reliable writer",

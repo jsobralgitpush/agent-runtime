@@ -31,3 +31,4 @@ Use FastAPI's enum validation for unsupported values and preserve every existing
 - The additional index consumes storage and adds a small write cost to lifecycle transitions.
 - Action selection is not authorization or retention; future tenant ownership must still scope the
   workflow, cursor, and event predicates.
+- Lifecycle event time bounds are defined separately in ADR 052.

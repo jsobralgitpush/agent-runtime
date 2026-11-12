@@ -163,8 +163,9 @@ Inspect successful state transitions in chronological order with
 `GET /v1/workflows/<workflow-id>/lifecycle-events`. Idempotent no-ops do not create duplicate events.
 Long histories can opt into keyset pagination with `limit=1..100`; follow `X-Next-Cursor` by passing
 it as `cursor` together with a limit. Use `action=archived` or `action=restored` to select one
-transition type; the filter composes with pagination. Omitting `limit` preserves the complete list
-response.
+transition type. Bound results with the timezone-aware, half-open interval `created_from` (inclusive)
+and `created_before` (exclusive); action, time, and cursor filters compose. Omitting `limit` preserves
+the complete list response.
 
 Run it, replacing `<workflow-id>`:
 
