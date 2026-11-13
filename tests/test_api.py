@@ -7,7 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api import archive_workflow, list_workflow_lifecycle_events, restore_workflow
+from app.api import (
+    archive_workflow,
+    list_workflow_lifecycle_events,
+    restore_workflow,
+    summarize_workflow_lifecycle_events,
+)
 from app.config import Settings
 from app.engine import WorkerLeaseLostError, assert_active_lease
 from app.metrics import METRICS_CONTENT_TYPE
@@ -485,6 +490,17 @@ async def test_workflow_lifecycle_event_transaction_is_idempotent() -> None:
             cursor=None,
         )
         assert [event.action for event in archived_events] == [WorkflowLifecycleAction.archived]
+        summary = await summarize_workflow_lifecycle_events(
+            workflow.id,
+            session,
+            created_from=None,
+            created_before=None,
+        )
+        assert summary.model_dump(mode="json") == {
+            "workflow_id": workflow.id,
+            "total": 2,
+            "counts": {"archived": 1, "restored": 1},
+        }
         persisted = await session.get(Workflow, workflow.id)
         assert persisted is not None
         assert persisted.archived_at is None
@@ -686,6 +702,71 @@ async def test_workflow_lifecycle_event_time_filter_rejects_invalid_ranges(
             "field": "created_from",
         }
     }
+
+
+async def test_workflow_lifecycle_event_summary_counts_time_bounded_actions(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    lifecycle_url = f"/v1/workflows/{workflow['id']}/lifecycle-events"
+    summary_url = f"{lifecycle_url}/summary"
+    for _ in range(3):
+        await client.post(f"/v1/workflows/{workflow['id']}/archive")
+        await client.post(f"/v1/workflows/{workflow['id']}/restore")
+
+    base_time = datetime(2026, 1, 2, tzinfo=UTC)
+    async with TestSession() as session:
+        events = list(
+            await session.scalars(
+                select(WorkflowLifecycleEvent)
+                .where(WorkflowLifecycleEvent.workflow_id == workflow["id"])
+                .order_by(WorkflowLifecycleEvent.created_at, WorkflowLifecycleEvent.id)
+            )
+        )
+        for offset, event in enumerate(events):
+            event.created_at = base_time + timedelta(minutes=offset)
+        await session.commit()
+
+    unbounded = await client.get(summary_url)
+    bounded = await client.get(
+        summary_url,
+        params={
+            "created_from": "2026-01-02T00:01:00Z",
+            "created_before": "2026-01-02T00:05:00Z",
+        },
+    )
+    empty = await client.get(
+        summary_url,
+        params={"created_from": "2026-01-02T00:10:00Z"},
+    )
+    missing = await client.get("/v1/workflows/not-found/lifecycle-events/summary")
+    invalid = await client.get(
+        summary_url,
+        params={
+            "created_from": "2026-01-02T00:05:00Z",
+            "created_before": "2026-01-02T00:01:00Z",
+        },
+    )
+
+    assert unbounded.json() == {
+        "workflow_id": workflow["id"],
+        "total": 6,
+        "counts": {"archived": 3, "restored": 3},
+    }
+    assert bounded.json() == {
+        "workflow_id": workflow["id"],
+        "total": 4,
+        "counts": {"archived": 2, "restored": 2},
+    }
+    assert empty.json() == {
+        "workflow_id": workflow["id"],
+        "total": 0,
+        "counts": {"archived": 0, "restored": 0},
+    }
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": "Workflow not found"}
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"]["code"] == "invalid_workflow_lifecycle_event_time_range"
 
 
 async def test_workflow_creation_idempotency_returns_original(client: AsyncClient) -> None:

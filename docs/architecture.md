@@ -87,7 +87,10 @@ path without `limit` continues returning the complete history. An optional actio
 only archive or restore transitions and uses `(workflow_id, action, created_at, id)` for bounded,
 ordered access. Time filtering accepts a timezone-aware, half-open
 `[created_from, created_before)` interval, normalizes bounds to UTC, and applies them before cursor
-traversal. Existing chronological indexes serve both filtered access paths.
+traversal. Existing chronological indexes serve both filtered access paths. Lifecycle summaries
+reuse the same optional time predicates and execute one grouped count by action without loading
+event payloads. The response always includes explicit zeroes for archive and restore counts, which
+keeps its shape stable when a window contains only one action or no events.
 
 Workflow run history uses keyset pagination ordered by `(created_at, id)` descending. The last run
 ID in a non-final page is an opaque cursor: the API reloads that row, verifies that it belongs to

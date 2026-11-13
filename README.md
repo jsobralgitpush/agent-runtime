@@ -165,7 +165,10 @@ Long histories can opt into keyset pagination with `limit=1..100`; follow `X-Nex
 it as `cursor` together with a limit. Use `action=archived` or `action=restored` to select one
 transition type. Bound results with the timezone-aware, half-open interval `created_from` (inclusive)
 and `created_before` (exclusive); action, time, and cursor filters compose. Omitting `limit` preserves
-the complete list response.
+the complete list response. Retrieve lightweight operational totals with
+`GET /v1/workflows/<workflow-id>/lifecycle-events/summary`. The response includes `total` and
+explicit `archived` and `restored` counts; the same `created_from` and `created_before` bounds can
+limit the summary to an incident or reporting window.
 
 Run it, replacing `<workflow-id>`:
 
@@ -383,6 +386,7 @@ across a worker crash and replay-safe recovery.
 | `POST` | `/v1/workflows/{id}/archive` | Archive a workflow and block new runs |
 | `POST` | `/v1/workflows/{id}/restore` | Revalidate and reactivate an archived workflow |
 | `GET` | `/v1/workflows/{id}/lifecycle-events` | Filter and paginate lifecycle transitions |
+| `GET` | `/v1/workflows/{id}/lifecycle-events/summary` | Count lifecycle transitions by action |
 | `GET` | `/v1/workflows/{id}/runs` | List and filter run history with cursor pagination |
 | `GET` | `/v1/workflows/{id}/runs/summary` | Count workflow runs by lifecycle status |
 | `POST` | `/v1/workflows/{id}/runs` | Execute a run, or enqueue it with `Prefer: respond-async` |
