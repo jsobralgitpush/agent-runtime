@@ -32,3 +32,6 @@ is required.
 - Existing clients remain backward compatible when both bounds are omitted.
 - Clients must repeat the same bounds while following a cursor to preserve one logical traversal.
 - Time filtering is not deletion or retention and does not limit stored lifecycle history.
+
+Lifecycle summaries reuse these bounds as described in
+[ADR 053](053-workflow-lifecycle-event-summary.md).

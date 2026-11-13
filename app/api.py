@@ -30,7 +30,9 @@ from app.schemas import (
     ToolRead,
     WorkflowCreate,
     WorkflowDefinition,
+    WorkflowLifecycleActionCounts,
     WorkflowLifecycleEventRead,
+    WorkflowLifecycleEventSummary,
     WorkflowRead,
     WorkflowRunPage,
     WorkflowRunSummary,
@@ -426,6 +428,59 @@ async def list_workflow_lifecycle_events(
     if len(events) > limit:
         response.headers["X-Next-Cursor"] = items[-1].id
     return items
+
+
+@router.get(
+    "/workflows/{workflow_id}/lifecycle-events/summary",
+    response_model=WorkflowLifecycleEventSummary,
+)
+async def summarize_workflow_lifecycle_events(
+    workflow_id: str,
+    session: Session,
+    created_from: datetime | None = None,
+    created_before: datetime | None = None,
+) -> WorkflowLifecycleEventSummary:
+    time_range_error = "invalid_workflow_lifecycle_event_time_range"
+    created_from = _normalize_history_bound(created_from, "created_from", time_range_error)
+    created_before = _normalize_history_bound(created_before, "created_before", time_range_error)
+    _validate_history_range(
+        created_from,
+        created_before,
+        "created_from",
+        "created_before",
+        time_range_error,
+    )
+    if await session.get(Workflow, workflow_id) is None:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    conditions = [WorkflowLifecycleEvent.workflow_id == workflow_id]
+    if session.get_bind().dialect.name == "sqlite":
+        created_key = func.julianday(WorkflowLifecycleEvent.created_at)
+        if created_from is not None:
+            conditions.append(created_key >= func.julianday(created_from))
+        if created_before is not None:
+            conditions.append(created_key < func.julianday(created_before))
+    else:
+        if created_from is not None:
+            conditions.append(WorkflowLifecycleEvent.created_at >= created_from)
+        if created_before is not None:
+            conditions.append(WorkflowLifecycleEvent.created_at < created_before)
+
+    result = await session.execute(
+        select(WorkflowLifecycleEvent.action, func.count(WorkflowLifecycleEvent.id))
+        .where(*conditions)
+        .group_by(WorkflowLifecycleEvent.action)
+    )
+    counts_by_action = {action: count for action, count in result.all()}
+    counts = WorkflowLifecycleActionCounts(
+        archived=counts_by_action.get(WorkflowLifecycleAction.archived, 0),
+        restored=counts_by_action.get(WorkflowLifecycleAction.restored, 0),
+    )
+    return WorkflowLifecycleEventSummary(
+        workflow_id=workflow_id,
+        total=sum(counts_by_action.values()),
+        counts=counts,
+    )
 
 
 async def _get_run(session: AsyncSession, run_id: str) -> WorkflowRun | None:

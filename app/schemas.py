@@ -214,6 +214,17 @@ class WorkflowLifecycleEventRead(BaseModel):
     created_at: datetime
 
 
+class WorkflowLifecycleActionCounts(BaseModel):
+    archived: int = 0
+    restored: int = 0
+
+
+class WorkflowLifecycleEventSummary(BaseModel):
+    workflow_id: str
+    total: int
+    counts: WorkflowLifecycleActionCounts
+
+
 class RunCreate(BaseModel):
     inputs: dict[str, Any] = Field(default_factory=dict)
 
