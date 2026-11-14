@@ -205,6 +205,16 @@ class WorkflowRead(BaseModel):
     archived_at: datetime | None
 
 
+class WorkflowArchiveStateCounts(BaseModel):
+    active: int = 0
+    archived: int = 0
+
+
+class WorkflowCatalogSummary(BaseModel):
+    total: int
+    counts: WorkflowArchiveStateCounts
+
+
 class WorkflowLifecycleEventRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

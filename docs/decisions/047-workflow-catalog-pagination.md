@@ -36,3 +36,6 @@ timestamp comparison.
 - A workflow ID is an opaque navigation token, not proof of access. Future tenant ownership must
   scope both cursor lookup and page selection.
 - The compatibility path remains unbounded; clients must opt in to receive bounded responses.
+
+Catalog-wide archive-state counts are described separately in
+[ADR 054](054-workflow-catalog-summary.md).
