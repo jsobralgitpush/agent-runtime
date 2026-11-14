@@ -28,6 +28,8 @@ from app.schemas import (
     RunRead,
     RunStatusCounts,
     ToolRead,
+    WorkflowArchiveStateCounts,
+    WorkflowCatalogSummary,
     WorkflowCreate,
     WorkflowDefinition,
     WorkflowLifecycleActionCounts,
@@ -284,6 +286,25 @@ async def list_workflows(
     if len(workflows) > limit:
         response.headers["X-Next-Cursor"] = items[-1].id
     return items
+
+
+@router.get("/workflows/summary", response_model=WorkflowCatalogSummary)
+async def summarize_workflows(
+    session: Session,
+    name: Annotated[str | None, Query(min_length=1, max_length=120)] = None,
+) -> WorkflowCatalogSummary:
+    archived_state = Workflow.archived_at.is_not(None).label("archived")
+    query = select(archived_state, func.count(Workflow.id)).group_by(archived_state)
+    if name is not None:
+        query = query.where(Workflow.name == name)
+
+    result = await session.execute(query)
+    counts_by_state = {archived: count for archived, count in result.all()}
+    counts = WorkflowArchiveStateCounts(
+        active=counts_by_state.get(False, 0),
+        archived=counts_by_state.get(True, 0),
+    )
+    return WorkflowCatalogSummary(total=sum(counts_by_state.values()), counts=counts)
 
 
 @router.get("/workflows/{workflow_id}", response_model=WorkflowRead)

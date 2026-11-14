@@ -151,7 +151,9 @@ only workflows accepting new runs, or `archived=true` to inspect retired definit
 filter can be combined with `name`; omitting it preserves the full catalog. Large catalogs can opt
 into keyset pagination with `limit=1..100`. When another page exists, the response includes its
 opaque workflow ID in `X-Next-Cursor`; pass that value as `cursor` together with `limit`. Omitting
-`limit` preserves the original unbounded list for existing clients.
+`limit` preserves the original unbounded list for existing clients. Retrieve catalog totals without
+loading workflow definitions with `GET /v1/workflows/summary`; it returns explicit `active` and
+`archived` counts, and accepts the same exact `name` filter as the catalog.
 
 Archive an obsolete definition with `POST /v1/workflows/<workflow-id>/archive`. Archiving is
 idempotent, keeps the workflow and its run history visible, and blocks only new runs with
@@ -382,6 +384,7 @@ across a worker crash and replay-safe recovery.
 | `POST` | `/v1/workflows/validate` | Validate a workflow without persisting it |
 | `POST` | `/v1/workflows` | Validate and persist a workflow |
 | `GET` | `/v1/workflows` | List workflows with optional filters and cursor pagination |
+| `GET` | `/v1/workflows/summary` | Count workflows by active and archived state |
 | `GET` | `/v1/workflows/{id}` | Inspect a workflow |
 | `POST` | `/v1/workflows/{id}/archive` | Archive a workflow and block new runs |
 | `POST` | `/v1/workflows/{id}/restore` | Revalidate and reactivate an archived workflow |

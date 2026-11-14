@@ -899,6 +899,36 @@ async def test_list_workflows_filters_by_archive_state(client: AsyncClient) -> N
     }
 
 
+async def test_summarize_workflows_counts_archive_states_and_filters_by_name(
+    client: AsyncClient,
+) -> None:
+    empty = await client.get("/v1/workflows/summary")
+    first = await create_workflow(client)
+    await create_workflow(client)
+    other = await client.post(
+        "/v1/workflows",
+        json={
+            "name": "Researcher",
+            "definition": {"steps": [{"key": "draft", "type": "llm"}]},
+        },
+    )
+    assert other.status_code == 201
+    for workflow in (first, other.json()):
+        response = await client.post(f"/v1/workflows/{workflow['id']}/archive")
+        assert response.status_code == 200
+
+    complete = await client.get("/v1/workflows/summary")
+    writers = await client.get("/v1/workflows/summary", params={"name": "Writer"})
+    missing = await client.get("/v1/workflows/summary", params={"name": "Missing"})
+    invalid = await client.get("/v1/workflows/summary", params={"name": ""})
+
+    assert empty.json() == {"total": 0, "counts": {"active": 0, "archived": 0}}
+    assert complete.json() == {"total": 3, "counts": {"active": 1, "archived": 2}}
+    assert writers.json() == {"total": 2, "counts": {"active": 1, "archived": 1}}
+    assert missing.json() == {"total": 0, "counts": {"active": 0, "archived": 0}}
+    assert invalid.status_code == 422
+
+
 async def test_list_workflows_rejects_invalid_name_filter(client: AsyncClient) -> None:
     assert (await client.get("/v1/workflows", params={"name": ""})).status_code == 422
     assert (await client.get("/v1/workflows", params={"name": "x" * 121})).status_code == 422
