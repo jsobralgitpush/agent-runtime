@@ -68,6 +68,10 @@ and can be combined with the name predicate. The archive-state index bounds thos
 Optional keyset pagination orders the catalog by `(created_at, id)` descending and returns the next
 exclusive workflow-ID cursor in an HTTP header. It composes with both filters and is enabled only
 when the client supplies a bounded `limit`; omitting `limit` preserves the original list response.
+Creation-time filtering accepts a timezone-aware, half-open `[created_from, created_before)`
+interval, normalizes bounds to UTC, and applies them before cursor traversal. SQLite normalizes
+timestamp comparisons with `julianday`; PostgreSQL keeps native indexed comparisons. The existing
+`(created_at, id)` index serves time-bounded ordering without another migration.
 Catalog summaries use one grouped count by archive state without materializing workflow definitions.
 They always return explicit active and archived zeroes, and the optional exact-name predicate uses
 the same semantics and index as catalog listing.

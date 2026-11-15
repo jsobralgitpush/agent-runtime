@@ -980,6 +980,91 @@ async def test_list_workflows_supports_opt_in_cursor_pagination(client: AsyncCli
     assert "X-Next-Cursor" not in final_page.headers
 
 
+async def test_list_workflows_filters_by_creation_time_with_catalog_filters_and_cursor(
+    client: AsyncClient,
+) -> None:
+    workflows: list[dict[str, object]] = []
+    for index in range(5):
+        response = await client.post(
+            "/v1/workflows",
+            json={
+                "name": "Windowed",
+                "description": str(index),
+                "definition": {"steps": [{"key": "draft", "type": "llm"}]},
+            },
+        )
+        assert response.status_code == 201
+        workflows.append(response.json())
+
+    for index in (0, 2):
+        response = await client.post(f"/v1/workflows/{workflows[index]['id']}/archive")
+        assert response.status_code == 200
+
+    base_time = datetime(2026, 1, 2, tzinfo=UTC)
+    async with TestSession() as session:
+        for offset, workflow_data in enumerate(workflows):
+            workflow = await session.get(Workflow, workflow_data["id"])
+            assert workflow is not None
+            workflow.created_at = base_time + timedelta(minutes=offset)
+        await session.commit()
+
+    boundary = await client.get(
+        "/v1/workflows",
+        params={
+            "name": "Windowed",
+            "archived": "false",
+            "created_from": "2026-01-02T01:01:00+01:00",
+            "created_before": "2026-01-02T00:04:00Z",
+        },
+    )
+    page_params = {
+        "name": "Windowed",
+        "archived": "false",
+        "created_from": "2026-01-02T00:01:00Z",
+        "created_before": "2026-01-02T00:05:00Z",
+        "limit": 2,
+    }
+    first = await client.get("/v1/workflows", params=page_params)
+    cursor = first.headers.get("X-Next-Cursor")
+    second = await client.get("/v1/workflows", params={**page_params, "cursor": cursor})
+
+    assert [workflow["description"] for workflow in boundary.json()] == ["3", "1"]
+    assert [workflow["description"] for workflow in first.json()] == ["4", "3"]
+    assert cursor == first.json()[-1]["id"]
+    assert [workflow["description"] for workflow in second.json()] == ["1"]
+    assert "X-Next-Cursor" not in second.headers
+
+
+async def test_list_workflows_rejects_invalid_creation_time_ranges(client: AsyncClient) -> None:
+    reversed_range = await client.get(
+        "/v1/workflows",
+        params={
+            "created_from": "2026-01-02T00:00:00Z",
+            "created_before": "2026-01-01T00:00:00Z",
+        },
+    )
+    naive = await client.get(
+        "/v1/workflows",
+        params={"created_from": "2026-01-01T00:00:00"},
+    )
+
+    assert reversed_range.status_code == 422
+    assert reversed_range.json() == {
+        "detail": {
+            "code": "invalid_workflow_time_range",
+            "reason": "created_from_must_precede_created_before",
+        }
+    }
+    assert naive.status_code == 422
+    assert naive.json() == {
+        "detail": {
+            "code": "invalid_workflow_time_range",
+            "reason": "timezone_required",
+            "field": "created_from",
+        }
+    }
+
+
 async def test_list_workflows_rejects_invalid_pagination(client: AsyncClient) -> None:
     missing_limit = await client.get("/v1/workflows", params={"cursor": "missing"})
     invalid_cursor = await client.get(

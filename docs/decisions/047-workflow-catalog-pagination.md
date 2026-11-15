@@ -39,3 +39,5 @@ timestamp comparison.
 
 Catalog-wide archive-state counts are described separately in
 [ADR 054](054-workflow-catalog-summary.md).
+Creation-time bounds for catalog traversal are described in
+[ADR 055](055-workflow-catalog-time-filter.md).
