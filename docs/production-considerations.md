@@ -104,7 +104,9 @@ grouped count.
 Workflow catalog cursors are navigation tokens, not authorization credentials. Tenant ownership
 must be applied both when loading the cursor row and when selecting the next page before this API is
 exposed as a multi-tenant service. Browser deployments must expose `X-Next-Cursor` in their CORS
-policy when frontend code needs to paginate the catalog.
+policy when frontend code needs to paginate the catalog. Creation-time bounds are query constraints,
+not retention controls, and clients must repeat the same bounds while following a cursor to preserve
+one logical traversal.
 Workflow names are labels rather than authorization capabilities. Exact-name catalog lookup must
 remain tenant-scoped once ownership is introduced, and clients must use the returned workflow ID
 for later operations because multiple workflows may share a name.

@@ -230,6 +230,8 @@ async def list_workflows(
     response: Response,
     name: Annotated[str | None, Query(min_length=1, max_length=120)] = None,
     archived: bool | None = None,
+    created_from: datetime | None = None,
+    created_before: datetime | None = None,
     limit: Annotated[int | None, Query(ge=1, le=100)] = None,
     cursor: Annotated[str | None, Query(max_length=36)] = None,
 ) -> list[Workflow]:
@@ -239,6 +241,17 @@ async def list_workflows(
             detail={"code": "workflow_pagination_limit_required"},
         )
 
+    time_range_error = "invalid_workflow_time_range"
+    created_from = _normalize_history_bound(created_from, "created_from", time_range_error)
+    created_before = _normalize_history_bound(created_before, "created_before", time_range_error)
+    _validate_history_range(
+        created_from,
+        created_before,
+        "created_from",
+        "created_before",
+        time_range_error,
+    )
+
     query = select(Workflow)
     is_sqlite = session.get_bind().dialect.name == "sqlite"
     if name is not None:
@@ -247,6 +260,17 @@ async def list_workflows(
         query = query.where(Workflow.archived_at.is_not(None))
     elif archived is False:
         query = query.where(Workflow.archived_at.is_(None))
+    if is_sqlite:
+        created_key = func.julianday(Workflow.created_at)
+        if created_from is not None:
+            query = query.where(created_key >= func.julianday(created_from))
+        if created_before is not None:
+            query = query.where(created_key < func.julianday(created_before))
+    else:
+        if created_from is not None:
+            query = query.where(Workflow.created_at >= created_from)
+        if created_before is not None:
+            query = query.where(Workflow.created_at < created_before)
     if cursor is not None:
         cursor_workflow = await session.get(Workflow, cursor)
         if cursor_workflow is None:
@@ -255,7 +279,6 @@ async def list_workflows(
                 detail={"code": "invalid_workflow_cursor"},
             )
         if is_sqlite:
-            created_key = func.julianday(Workflow.created_at)
             cursor_key = func.julianday(cursor_workflow.created_at)
             query = query.where(
                 or_(
