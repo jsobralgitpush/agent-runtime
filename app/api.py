@@ -315,11 +315,35 @@ async def list_workflows(
 async def summarize_workflows(
     session: Session,
     name: Annotated[str | None, Query(min_length=1, max_length=120)] = None,
+    created_from: datetime | None = None,
+    created_before: datetime | None = None,
 ) -> WorkflowCatalogSummary:
+    time_range_error = "invalid_workflow_time_range"
+    created_from = _normalize_history_bound(created_from, "created_from", time_range_error)
+    created_before = _normalize_history_bound(created_before, "created_before", time_range_error)
+    _validate_history_range(
+        created_from,
+        created_before,
+        "created_from",
+        "created_before",
+        time_range_error,
+    )
+
     archived_state = Workflow.archived_at.is_not(None).label("archived")
     query = select(archived_state, func.count(Workflow.id)).group_by(archived_state)
     if name is not None:
         query = query.where(Workflow.name == name)
+    if session.get_bind().dialect.name == "sqlite":
+        created_key = func.julianday(Workflow.created_at)
+        if created_from is not None:
+            query = query.where(created_key >= func.julianday(created_from))
+        if created_before is not None:
+            query = query.where(created_key < func.julianday(created_before))
+    else:
+        if created_from is not None:
+            query = query.where(Workflow.created_at >= created_from)
+        if created_before is not None:
+            query = query.where(Workflow.created_at < created_before)
 
     result = await session.execute(query)
     counts_by_state = {archived: count for archived, count in result.all()}

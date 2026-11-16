@@ -100,7 +100,7 @@ Archive-state catalog filters are convenience predicates, not an authorization b
 tenant schema must apply tenant ownership before name and archive predicates and use tenant-leading
 indexes for bounded catalog access. Catalog summaries reflect committed rows at query time and are
 not a snapshot shared with a later list request; future tenant scoping must be applied before the
-grouped count.
+grouped count. Summary time bounds constrain aggregation but do not implement retention.
 Workflow catalog cursors are navigation tokens, not authorization credentials. Tenant ownership
 must be applied both when loading the cursor row and when selecting the next page before this API is
 exposed as a multi-tenant service. Browser deployments must expose `X-Next-Cursor` in their CORS
