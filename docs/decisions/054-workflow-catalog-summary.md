@@ -29,3 +29,6 @@ route so `summary` cannot be interpreted as an identifier.
 - Both state keys are present even when their count is zero.
 - Counts reflect committed rows at query time and are not a snapshot shared with later list calls.
 - The endpoint is operational aggregation, not tenant authorization or retention policy.
+
+Time-bounded catalog summaries are described in
+[ADR 056](056-time-bounded-workflow-catalog-summary.md).

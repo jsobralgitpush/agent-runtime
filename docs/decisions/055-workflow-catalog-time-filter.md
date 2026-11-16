@@ -31,3 +31,6 @@ comparisons. Reuse the existing `(created_at, id)` index, so no migration is req
 - Existing clients remain backward compatible when both bounds are omitted.
 - Clients must repeat the same bounds while following a cursor to preserve one logical traversal.
 - Time filtering is not deletion or retention and does not limit stored workflow definitions.
+
+The same interval contract is applied to catalog summaries in
+[ADR 056](056-time-bounded-workflow-catalog-summary.md).

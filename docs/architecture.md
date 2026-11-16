@@ -74,7 +74,8 @@ timestamp comparisons with `julianday`; PostgreSQL keeps native indexed comparis
 `(created_at, id)` index serves time-bounded ordering without another migration.
 Catalog summaries use one grouped count by archive state without materializing workflow definitions.
 They always return explicit active and archived zeroes, and the optional exact-name predicate uses
-the same semantics and index as catalog listing.
+the same semantics and index as catalog listing. Optional creation-time bounds reuse the catalog's
+half-open, timezone-aware interval and SQLite normalization before the grouped count.
 
 Archiving adds a timestamp to an immutable workflow definition rather than deleting it. The archive
 endpoint and run creation both lock the workflow row, establishing a clear boundary under concurrent

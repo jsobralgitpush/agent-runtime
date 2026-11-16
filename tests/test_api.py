@@ -929,6 +929,59 @@ async def test_summarize_workflows_counts_archive_states_and_filters_by_name(
     assert invalid.status_code == 422
 
 
+async def test_summarize_workflows_counts_time_bounded_archive_states(
+    client: AsyncClient,
+) -> None:
+    workflows = [await create_workflow(client) for _ in range(4)]
+    for index in (0, 2):
+        response = await client.post(f"/v1/workflows/{workflows[index]['id']}/archive")
+        assert response.status_code == 200
+
+    base_time = datetime(2026, 1, 2, tzinfo=UTC)
+    async with TestSession() as session:
+        for offset, workflow_data in enumerate(workflows):
+            workflow = await session.get(Workflow, workflow_data["id"])
+            assert workflow is not None
+            workflow.created_at = base_time + timedelta(minutes=offset)
+        await session.commit()
+
+    bounded = await client.get(
+        "/v1/workflows/summary",
+        params={
+            "created_from": "2026-01-02T01:01:00+01:00",
+            "created_before": "2026-01-02T00:04:00Z",
+        },
+    )
+    empty = await client.get(
+        "/v1/workflows/summary",
+        params={"created_from": "2026-01-02T00:10:00Z"},
+    )
+    reversed_range = await client.get(
+        "/v1/workflows/summary",
+        params={
+            "created_from": "2026-01-02T00:04:00Z",
+            "created_before": "2026-01-02T00:01:00Z",
+        },
+    )
+    naive = await client.get(
+        "/v1/workflows/summary",
+        params={"created_before": "2026-01-02T00:04:00"},
+    )
+
+    assert bounded.json() == {"total": 3, "counts": {"active": 2, "archived": 1}}
+    assert empty.json() == {"total": 0, "counts": {"active": 0, "archived": 0}}
+    assert reversed_range.status_code == 422
+    assert reversed_range.json()["detail"]["code"] == "invalid_workflow_time_range"
+    assert naive.status_code == 422
+    assert naive.json() == {
+        "detail": {
+            "code": "invalid_workflow_time_range",
+            "reason": "timezone_required",
+            "field": "created_before",
+        }
+    }
+
+
 async def test_list_workflows_rejects_invalid_name_filter(client: AsyncClient) -> None:
     assert (await client.get("/v1/workflows", params={"name": ""})).status_code == 422
     assert (await client.get("/v1/workflows", params={"name": "x" * 121})).status_code == 422
