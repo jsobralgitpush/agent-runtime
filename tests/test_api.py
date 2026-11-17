@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import (
     archive_workflow,
     list_workflow_lifecycle_events,
+    list_workflows,
     restore_workflow,
     summarize_workflow_lifecycle_events,
 )
@@ -1116,6 +1117,108 @@ async def test_list_workflows_rejects_invalid_creation_time_ranges(client: Async
             "field": "created_from",
         }
     }
+
+
+async def test_list_workflows_filters_by_archive_time_with_catalog_filters_and_cursor(
+    client: AsyncClient,
+) -> None:
+    workflows: list[dict[str, object]] = []
+    for index in range(5):
+        response = await client.post(
+            "/v1/workflows",
+            json={
+                "name": "Archive window",
+                "description": str(index),
+                "definition": {"steps": [{"key": "draft", "type": "llm"}]},
+            },
+        )
+        assert response.status_code == 201
+        workflows.append(response.json())
+
+    for workflow in workflows[:4]:
+        response = await client.post(f"/v1/workflows/{workflow['id']}/archive")
+        assert response.status_code == 200
+
+    base_time = datetime(2026, 1, 2, tzinfo=UTC)
+    async with TestSession() as session:
+        for offset, workflow_data in enumerate(workflows):
+            workflow = await session.get(Workflow, workflow_data["id"])
+            assert workflow is not None
+            workflow.created_at = base_time + timedelta(minutes=offset)
+            if workflow.archived_at is not None:
+                workflow.archived_at = base_time + timedelta(hours=offset)
+        await session.commit()
+
+    params = {
+        "name": "Archive window",
+        "archived_from": "2026-01-02T02:00:00+01:00",
+        "archived_before": "2026-01-02T03:00:00Z",
+        "limit": 1,
+    }
+    first = await client.get("/v1/workflows", params=params)
+    cursor = first.headers.get("X-Next-Cursor")
+    second = await client.get("/v1/workflows", params={**params, "cursor": cursor})
+    active = await client.get(
+        "/v1/workflows",
+        params={**params, "archived": "false", "limit": 100},
+    )
+
+    assert [workflow["description"] for workflow in first.json()] == ["2"]
+    assert cursor == first.json()[0]["id"]
+    assert [workflow["description"] for workflow in second.json()] == ["1"]
+    assert "X-Next-Cursor" not in second.headers
+    assert active.json() == []
+
+
+async def test_list_workflows_rejects_invalid_archive_time_ranges(client: AsyncClient) -> None:
+    reversed_range = await client.get(
+        "/v1/workflows",
+        params={
+            "archived_from": "2026-01-02T00:00:00Z",
+            "archived_before": "2026-01-01T00:00:00Z",
+        },
+    )
+    naive = await client.get(
+        "/v1/workflows",
+        params={"archived_from": "2026-01-01T00:00:00"},
+    )
+
+    assert reversed_range.status_code == 422
+    assert reversed_range.json() == {
+        "detail": {
+            "code": "invalid_workflow_archive_time_range",
+            "reason": "archived_from_must_precede_archived_before",
+        }
+    }
+    assert naive.status_code == 422
+    assert naive.json() == {
+        "detail": {
+            "code": "invalid_workflow_archive_time_range",
+            "reason": "timezone_required",
+            "field": "archived_from",
+        }
+    }
+
+
+async def test_list_workflows_builds_native_datetime_predicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with TestSession() as session:
+        monkeypatch.setattr(session.get_bind().dialect, "name", "postgresql")
+        workflows = await list_workflows(
+            session,
+            Response(),
+            name=None,
+            archived=None,
+            created_from=datetime(2026, 1, 1, tzinfo=UTC),
+            created_before=datetime(2026, 2, 1, tzinfo=UTC),
+            archived_from=datetime(2026, 1, 2, tzinfo=UTC),
+            archived_before=datetime(2026, 1, 31, tzinfo=UTC),
+            limit=None,
+            cursor=None,
+        )
+
+    assert workflows == []
 
 
 async def test_list_workflows_rejects_invalid_pagination(client: AsyncClient) -> None:

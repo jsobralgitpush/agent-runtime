@@ -72,6 +72,10 @@ Creation-time filtering accepts a timezone-aware, half-open `[created_from, crea
 interval, normalizes bounds to UTC, and applies them before cursor traversal. SQLite normalizes
 timestamp comparisons with `julianday`; PostgreSQL keeps native indexed comparisons. The existing
 `(created_at, id)` index serves time-bounded ordering without another migration.
+Archive-time filtering applies the same timezone-aware half-open interval to `archived_at`. Null
+timestamps naturally exclude active workflows, while the existing archive-time index bounds the
+scan. Pagination remains ordered by workflow creation time, so archive bounds apply before the
+created-time cursor predicate.
 Catalog summaries use one grouped count by archive state without materializing workflow definitions.
 They always return explicit active and archived zeroes, and the optional exact-name predicate uses
 the same semantics and index as catalog listing. Optional creation-time bounds reuse the catalog's

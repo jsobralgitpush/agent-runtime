@@ -155,7 +155,9 @@ opaque workflow ID in `X-Next-Cursor`; pass that value as `cursor` together with
 loading workflow definitions with `GET /v1/workflows/summary`; it returns explicit `active` and
 `archived` counts, and accepts the same exact `name` and creation-time filters as the catalog. Bound
 catalog results and summaries with the timezone-aware, half-open interval `created_from` (inclusive)
-and `created_before` (exclusive); creation time, name, archive state, and cursor filters compose.
+and `created_before` (exclusive). Use `archived_from` and `archived_before` with the same interval
+semantics to select workflows by archive time; these bounds naturally exclude active workflows.
+Creation time, archive time, name, archive state, and cursor filters compose.
 
 Archive an obsolete definition with `POST /v1/workflows/<workflow-id>/archive`. Archiving is
 idempotent, keeps the workflow and its run history visible, and blocks only new runs with
@@ -385,7 +387,7 @@ across a worker crash and replay-safe recovery.
 | `GET` | `/v1/tools` | List allowlisted tool names available to this runtime |
 | `POST` | `/v1/workflows/validate` | Validate a workflow without persisting it |
 | `POST` | `/v1/workflows` | Validate and persist a workflow |
-| `GET` | `/v1/workflows` | Filter workflows by name, state, and creation time with optional pagination |
+| `GET` | `/v1/workflows` | Filter workflows by name, state, creation/archive time, and pagination |
 | `GET` | `/v1/workflows/summary` | Count workflows by state with optional name and time filters |
 | `GET` | `/v1/workflows/{id}` | Inspect a workflow |
 | `POST` | `/v1/workflows/{id}/archive` | Archive a workflow and block new runs |

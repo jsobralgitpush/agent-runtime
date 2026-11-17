@@ -30,3 +30,6 @@ every workflow row. Do not change the response shape or hide archived workflows 
 - A nullable timestamp remains the source of truth; no redundant boolean column is introduced.
 - The current index assumes a single-tenant catalog. Tenant ownership must lead the relevant indexes
   before exposing the endpoint as a multi-tenant service.
+
+Archive-time bounds for catalog traversal are described in
+[ADR 057](057-workflow-catalog-archive-time-filter.md).

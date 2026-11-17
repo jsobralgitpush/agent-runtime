@@ -232,6 +232,8 @@ async def list_workflows(
     archived: bool | None = None,
     created_from: datetime | None = None,
     created_before: datetime | None = None,
+    archived_from: datetime | None = None,
+    archived_before: datetime | None = None,
     limit: Annotated[int | None, Query(ge=1, le=100)] = None,
     cursor: Annotated[str | None, Query(max_length=36)] = None,
 ) -> list[Workflow]:
@@ -251,6 +253,20 @@ async def list_workflows(
         "created_before",
         time_range_error,
     )
+    archive_time_range_error = "invalid_workflow_archive_time_range"
+    archived_from = _normalize_history_bound(
+        archived_from, "archived_from", archive_time_range_error
+    )
+    archived_before = _normalize_history_bound(
+        archived_before, "archived_before", archive_time_range_error
+    )
+    _validate_history_range(
+        archived_from,
+        archived_before,
+        "archived_from",
+        "archived_before",
+        archive_time_range_error,
+    )
 
     query = select(Workflow)
     is_sqlite = session.get_bind().dialect.name == "sqlite"
@@ -262,15 +278,24 @@ async def list_workflows(
         query = query.where(Workflow.archived_at.is_(None))
     if is_sqlite:
         created_key = func.julianday(Workflow.created_at)
+        archived_key = func.julianday(Workflow.archived_at)
         if created_from is not None:
             query = query.where(created_key >= func.julianday(created_from))
         if created_before is not None:
             query = query.where(created_key < func.julianday(created_before))
+        if archived_from is not None:
+            query = query.where(archived_key >= func.julianday(archived_from))
+        if archived_before is not None:
+            query = query.where(archived_key < func.julianday(archived_before))
     else:
         if created_from is not None:
             query = query.where(Workflow.created_at >= created_from)
         if created_before is not None:
             query = query.where(Workflow.created_at < created_before)
+        if archived_from is not None:
+            query = query.where(Workflow.archived_at >= archived_from)
+        if archived_before is not None:
+            query = query.where(Workflow.archived_at < archived_before)
     if cursor is not None:
         cursor_workflow = await session.get(Workflow, cursor)
         if cursor_workflow is None:

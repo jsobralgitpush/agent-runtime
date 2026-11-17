@@ -106,7 +106,9 @@ must be applied both when loading the cursor row and when selecting the next pag
 exposed as a multi-tenant service. Browser deployments must expose `X-Next-Cursor` in their CORS
 policy when frontend code needs to paginate the catalog. Creation-time bounds are query constraints,
 not retention controls, and clients must repeat the same bounds while following a cursor to preserve
-one logical traversal.
+one logical traversal. Archive-time bounds also constrain reads rather than deleting data; they
+exclude active workflows because those rows have no archive timestamp. Combining them with
+`archived=false` therefore returns an empty result.
 Workflow names are labels rather than authorization capabilities. Exact-name catalog lookup must
 remain tenant-scoped once ownership is introduced, and clients must use the returned workflow ID
 for later operations because multiple workflows may share a name.
