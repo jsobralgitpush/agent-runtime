@@ -13,6 +13,7 @@ from app.api import (
     list_workflows,
     restore_workflow,
     summarize_workflow_lifecycle_events,
+    summarize_workflows,
 )
 from app.config import Settings
 from app.engine import WorkerLeaseLostError, assert_active_lease
@@ -983,6 +984,76 @@ async def test_summarize_workflows_counts_time_bounded_archive_states(
     }
 
 
+async def test_summarize_workflows_counts_archive_time_window(
+    client: AsyncClient,
+) -> None:
+    workflows = [await create_workflow(client) for _ in range(4)]
+    for workflow in workflows[:3]:
+        response = await client.post(f"/v1/workflows/{workflow['id']}/archive")
+        assert response.status_code == 200
+
+    base_time = datetime(2026, 1, 2, tzinfo=UTC)
+    async with TestSession() as session:
+        for offset, workflow_data in enumerate(workflows):
+            workflow = await session.get(Workflow, workflow_data["id"])
+            assert workflow is not None
+            workflow.created_at = base_time + timedelta(minutes=offset)
+            if workflow.archived_at is not None:
+                workflow.archived_at = base_time + timedelta(hours=offset)
+        await session.commit()
+
+    archive_bounds = {
+        "archived_from": "2026-01-02T02:00:00+01:00",
+        "archived_before": "2026-01-02T03:00:00Z",
+    }
+    bounded = await client.get(
+        "/v1/workflows/summary",
+        params={"name": "Writer", **archive_bounds},
+    )
+    composed = await client.get(
+        "/v1/workflows/summary",
+        params={
+            "name": "Writer",
+            "created_from": "2026-01-02T00:02:00Z",
+            **archive_bounds,
+        },
+    )
+    empty = await client.get(
+        "/v1/workflows/summary",
+        params={"archived_from": "2026-01-02T10:00:00Z"},
+    )
+    reversed_range = await client.get(
+        "/v1/workflows/summary",
+        params={
+            "archived_from": "2026-01-02T04:00:00Z",
+            "archived_before": "2026-01-02T01:00:00Z",
+        },
+    )
+    naive = await client.get(
+        "/v1/workflows/summary",
+        params={"archived_before": "2026-01-02T03:00:00"},
+    )
+
+    assert bounded.json() == {"total": 2, "counts": {"active": 0, "archived": 2}}
+    assert composed.json() == {"total": 1, "counts": {"active": 0, "archived": 1}}
+    assert empty.json() == {"total": 0, "counts": {"active": 0, "archived": 0}}
+    assert reversed_range.status_code == 422
+    assert reversed_range.json() == {
+        "detail": {
+            "code": "invalid_workflow_archive_time_range",
+            "reason": "archived_from_must_precede_archived_before",
+        }
+    }
+    assert naive.status_code == 422
+    assert naive.json() == {
+        "detail": {
+            "code": "invalid_workflow_archive_time_range",
+            "reason": "timezone_required",
+            "field": "archived_before",
+        }
+    }
+
+
 async def test_list_workflows_rejects_invalid_name_filter(client: AsyncClient) -> None:
     assert (await client.get("/v1/workflows", params={"name": ""})).status_code == 422
     assert (await client.get("/v1/workflows", params={"name": "x" * 121})).status_code == 422
@@ -1219,6 +1290,26 @@ async def test_list_workflows_builds_native_datetime_predicates(
         )
 
     assert workflows == []
+
+
+async def test_summarize_workflows_builds_native_datetime_predicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with TestSession() as session:
+        monkeypatch.setattr(session.get_bind().dialect, "name", "postgresql")
+        summary = await summarize_workflows(
+            session,
+            name=None,
+            created_from=datetime(2026, 1, 1, tzinfo=UTC),
+            created_before=datetime(2026, 2, 1, tzinfo=UTC),
+            archived_from=datetime(2026, 1, 2, tzinfo=UTC),
+            archived_before=datetime(2026, 1, 31, tzinfo=UTC),
+        )
+
+    assert summary.model_dump() == {
+        "total": 0,
+        "counts": {"active": 0, "archived": 0},
+    }
 
 
 async def test_list_workflows_rejects_invalid_pagination(client: AsyncClient) -> None:

@@ -153,10 +153,11 @@ into keyset pagination with `limit=1..100`. When another page exists, the respon
 opaque workflow ID in `X-Next-Cursor`; pass that value as `cursor` together with `limit`. Omitting
 `limit` preserves the original unbounded list for existing clients. Retrieve catalog totals without
 loading workflow definitions with `GET /v1/workflows/summary`; it returns explicit `active` and
-`archived` counts, and accepts the same exact `name` and creation-time filters as the catalog. Bound
+`archived` counts, and accepts the same exact `name` and time filters as the catalog. Bound
 catalog results and summaries with the timezone-aware, half-open interval `created_from` (inclusive)
 and `created_before` (exclusive). Use `archived_from` and `archived_before` with the same interval
-semantics to select workflows by archive time; these bounds naturally exclude active workflows.
+semantics to select workflows or summary totals by archive time; these bounds naturally exclude
+active workflows, so a bounded summary reports an explicit active count of zero.
 Creation time, archive time, name, archive state, and cursor filters compose.
 
 Archive an obsolete definition with `POST /v1/workflows/<workflow-id>/archive`. Archiving is

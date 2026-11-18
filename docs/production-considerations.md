@@ -108,7 +108,9 @@ policy when frontend code needs to paginate the catalog. Creation-time bounds ar
 not retention controls, and clients must repeat the same bounds while following a cursor to preserve
 one logical traversal. Archive-time bounds also constrain reads rather than deleting data; they
 exclude active workflows because those rows have no archive timestamp. Combining them with
-`archived=false` therefore returns an empty result.
+`archived=false` therefore returns an empty result. Archive-bounded catalog summaries likewise
+return an explicit active count of zero; they remain point-in-time operational aggregates rather
+than reporting snapshots or authorization controls.
 Workflow names are labels rather than authorization capabilities. Exact-name catalog lookup must
 remain tenant-scoped once ownership is introduced, and clients must use the returned workflow ID
 for later operations because multiple workflows may share a name.
