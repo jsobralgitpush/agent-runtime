@@ -79,7 +79,10 @@ created-time cursor predicate.
 Catalog summaries use one grouped count by archive state without materializing workflow definitions.
 They always return explicit active and archived zeroes, and the optional exact-name predicate uses
 the same semantics and index as catalog listing. Optional creation-time bounds reuse the catalog's
-half-open, timezone-aware interval and SQLite normalization before the grouped count.
+half-open, timezone-aware interval and SQLite normalization before the grouped count. Optional
+archive-time bounds apply the same interval to `archived_at` before aggregation. Because null
+archive timestamps cannot match either bound, an archive-bounded summary reports an explicit active
+count of zero. Creation time, archive time, and exact name compose.
 
 Archiving adds a timestamp to an immutable workflow definition rather than deleting it. The archive
 endpoint and run creation both lock the workflow row, establishing a clear boundary under concurrent

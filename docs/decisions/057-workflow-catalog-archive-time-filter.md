@@ -33,3 +33,4 @@ required.
 - Existing clients remain backward compatible when both bounds are omitted.
 - Clients must repeat archive bounds while following a cursor to preserve one logical traversal.
 - Archive-time filtering is not deletion, retention, or tenant authorization.
+- Archive-time summary aggregation is addressed separately by ADR 058.
