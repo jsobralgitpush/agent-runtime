@@ -229,6 +229,7 @@ async def list_workflows(
     session: Session,
     response: Response,
     name: Annotated[str | None, Query(min_length=1, max_length=120)] = None,
+    idempotency_key: Annotated[str | None, Query(min_length=1, max_length=255)] = None,
     archived: bool | None = None,
     created_from: datetime | None = None,
     created_before: datetime | None = None,
@@ -272,6 +273,8 @@ async def list_workflows(
     is_sqlite = session.get_bind().dialect.name == "sqlite"
     if name is not None:
         query = query.where(Workflow.name == name)
+    if idempotency_key is not None:
+        query = query.where(Workflow.idempotency_key == idempotency_key)
     if archived is True:
         query = query.where(Workflow.archived_at.is_not(None))
     elif archived is False:

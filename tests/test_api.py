@@ -869,6 +869,75 @@ async def test_list_workflows_filters_by_exact_name(client: AsyncClient) -> None
     assert (await client.get("/v1/workflows", params={"name": "Missing"})).json() == []
 
 
+async def test_list_workflows_filters_by_creation_idempotency_key(
+    client: AsyncClient,
+) -> None:
+    payload = {
+        "name": "Recoverable writer",
+        "definition": {"steps": [{"key": "draft", "type": "llm"}]},
+    }
+    target = await client.post(
+        "/v1/workflows",
+        json=payload,
+        headers={"Idempotency-Key": "workflow-catalog-request"},
+    )
+    other = await client.post(
+        "/v1/workflows",
+        json=payload,
+        headers={"Idempotency-Key": "other-workflow-request"},
+    )
+    assert target.status_code == 201
+    assert other.status_code == 201
+
+    archived = await client.post(f"/v1/workflows/{target.json()['id']}/archive")
+    assert archived.status_code == 200
+
+    exact = await client.get(
+        "/v1/workflows",
+        params={"idempotency_key": "workflow-catalog-request"},
+    )
+    composed = await client.get(
+        "/v1/workflows",
+        params={
+            "idempotency_key": "workflow-catalog-request",
+            "name": "Recoverable writer",
+            "archived": "true",
+            "limit": 1,
+        },
+    )
+    active = await client.get(
+        "/v1/workflows",
+        params={"idempotency_key": "workflow-catalog-request", "archived": "false"},
+    )
+    missing = await client.get(
+        "/v1/workflows",
+        params={"idempotency_key": "missing-workflow-request"},
+    )
+    wrong_name = await client.get(
+        "/v1/workflows",
+        params={
+            "idempotency_key": "workflow-catalog-request",
+            "name": "Another workflow",
+        },
+    )
+    empty = await client.get("/v1/workflows", params={"idempotency_key": ""})
+    oversized = await client.get(
+        "/v1/workflows",
+        params={"idempotency_key": "x" * 256},
+    )
+
+    assert exact.status_code == 200
+    assert exact.json() == [archived.json()]
+    assert "idempotency_key" not in exact.json()[0]
+    assert composed.json() == [archived.json()]
+    assert "X-Next-Cursor" not in composed.headers
+    assert active.json() == []
+    assert missing.json() == []
+    assert wrong_name.json() == []
+    assert empty.status_code == 422
+    assert oversized.status_code == 422
+
+
 async def test_list_workflows_filters_by_archive_state(client: AsyncClient) -> None:
     first = await create_workflow(client)
     second = await create_workflow(client)

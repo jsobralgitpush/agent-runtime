@@ -142,7 +142,10 @@ curl -X POST http://localhost:8000/v1/workflows \
 The optional workflow-creation `Idempotency-Key` is limited to 255 characters. Retrying the same
 payload with the same key returns the original workflow, including after concurrent requests; using
 that key with a different payload returns `409 idempotency_key_reused`. Omitting the header preserves
-ordinary non-idempotent creation.
+ordinary non-idempotent creation. If the create response is lost, retrieve the committed workflow
+with `GET /v1/workflows?idempotency_key=<key>` without resubmitting its definition. The exact filter
+returns zero or one item because the creation key is globally unique in the current single-tenant
+schema.
 
 List all workflows with `GET /v1/workflows`, or use `?name=Reliable%20writer` for an exact,
 case-sensitive name lookup. The filter returns every matching workflow because names are labels,
@@ -388,7 +391,7 @@ across a worker crash and replay-safe recovery.
 | `GET` | `/v1/tools` | List allowlisted tool names available to this runtime |
 | `POST` | `/v1/workflows/validate` | Validate a workflow without persisting it |
 | `POST` | `/v1/workflows` | Validate and persist a workflow |
-| `GET` | `/v1/workflows` | Filter workflows by name, state, creation/archive time, and pagination |
+| `GET` | `/v1/workflows` | Filter workflows by name, creation key, state, time, and pagination |
 | `GET` | `/v1/workflows/summary` | Count workflows by state with optional name and time filters |
 | `GET` | `/v1/workflows/{id}` | Inspect a workflow |
 | `POST` | `/v1/workflows/{id}/archive` | Archive a workflow and block new runs |
