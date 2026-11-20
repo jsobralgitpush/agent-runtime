@@ -17,6 +17,7 @@ from app.models import (
     WorkflowLifecycleAction,
     WorkflowLifecycleEvent,
     WorkflowRun,
+    WorkflowRunRecoveryEvent,
 )
 from app.providers import build_provider_registry
 from app.schemas import (
@@ -37,6 +38,7 @@ from app.schemas import (
     WorkflowLifecycleEventSummary,
     WorkflowRead,
     WorkflowRunPage,
+    WorkflowRunRecoveryEventRead,
     WorkflowRunSummary,
     WorkflowValidationRead,
 )
@@ -812,6 +814,24 @@ async def get_run(run_id: str, session: Session) -> WorkflowRun:
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return run
+
+
+@router.get(
+    "/runs/{run_id}/recovery-events",
+    response_model=list[WorkflowRunRecoveryEventRead],
+)
+async def list_run_recovery_events(
+    run_id: str,
+    session: Session,
+) -> list[WorkflowRunRecoveryEvent]:
+    if await session.get(WorkflowRun, run_id) is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    query = (
+        select(WorkflowRunRecoveryEvent)
+        .where(WorkflowRunRecoveryEvent.run_id == run_id)
+        .order_by(WorkflowRunRecoveryEvent.created_at, WorkflowRunRecoveryEvent.id)
+    )
+    return list(await session.scalars(query))
 
 
 @router.post("/runs/{run_id}/approval", response_model=RunRead)

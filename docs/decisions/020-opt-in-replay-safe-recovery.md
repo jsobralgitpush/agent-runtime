@@ -35,6 +35,6 @@ safety because entering `waiting` releases the lease and does not require this r
 - Default behavior remains backward compatible and never adds a new attempt after lease expiry.
 - Opted-in calls have at-least-once execution and can recover automatically after worker death.
 - Completed serial steps and DAG siblings are not repeated.
-- The runtime records cumulative attempts but does not yet store a separate immutable recovery event.
+- Immutable recovery events are added separately by ADR 060.
 - An incorrect `replay_safe` assertion can duplicate side effects; the runtime cannot validate an
   external idempotency implementation.

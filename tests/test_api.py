@@ -2345,6 +2345,18 @@ async def test_worker_fails_expired_run_without_replaying_steps(client: AsyncCli
             )
         assert await recover_expired_runs(session, 100, now=recovered_at) == 0
 
+    events = await client.get(f"/v1/runs/{created.json()['id']}/recovery-events")
+    missing = await client.get("/v1/runs/missing/recovery-events")
+
+    assert events.status_code == 200
+    assert len(events.json()) == 1
+    assert events.json()[0]["run_id"] == created.json()["id"]
+    assert events.json()[0]["outcome"] == "failed"
+    assert events.json()[0]["expired_lease_owner"] == "dead-worker"
+    assert events.json()[0]["lease_expired_at"] == "2026-09-24T23:59:00"
+    assert events.json()[0]["created_at"] == "2026-09-25T00:00:00"
+    assert missing.status_code == 404
+
 
 async def test_worker_requeues_and_resumes_explicitly_replay_safe_step(
     client: AsyncClient,
@@ -2448,6 +2460,11 @@ async def test_worker_requeues_and_resumes_explicitly_replay_safe_step(
         "message": "draft",
         "operation_key": f"{run_id}:publish",
     }
+    recovery_events = (await client.get(f"/v1/runs/{run_id}/recovery-events")).json()
+    assert len(recovery_events) == 1
+    assert recovery_events[0]["outcome"] == "requeued"
+    assert recovery_events[0]["expired_lease_owner"] == "dead-worker"
+    assert recovery_events[0]["created_at"] == "2026-10-10T00:00:00"
 
 
 async def test_worker_requeues_expired_claim_before_any_step_started(
@@ -2477,6 +2494,31 @@ async def test_worker_requeues_expired_claim_before_any_step_started(
         assert recovered.status == RunStatus.pending
         assert recovered.lease_owner is None
         assert recovered.lease_expires_at is None
+
+    second_recovered_at = recovered_at + timedelta(minutes=2)
+    async with TestSession() as session:
+        claimed_again = await claim_next_run(
+            session,
+            "second-dead-worker",
+            60,
+            now=recovered_at,
+        )
+        assert claimed_again is not None
+        assert claimed_again.id == created.json()["id"]
+
+    async with TestSession() as session:
+        assert await recover_expired_runs(session, 100, now=second_recovered_at) == 1
+
+    events = (await client.get(f"/v1/runs/{created.json()['id']}/recovery-events")).json()
+    assert [event["outcome"] for event in events] == ["requeued", "requeued"]
+    assert [event["expired_lease_owner"] for event in events] == [
+        "dead-before-start",
+        "second-dead-worker",
+    ]
+    assert [event["created_at"] for event in events] == [
+        "2026-10-10T00:00:00",
+        "2026-10-10T00:02:00",
+    ]
 
 
 async def test_worker_reports_when_queue_is_empty() -> None:

@@ -28,6 +28,7 @@ It deliberately implements the orchestration core without an agent framework. Th
 - Idempotent run creation under concurrent requests
 - Optional deferred execution through database workers with renewable leases
 - Opt-in replay-safe recovery of expired worker leases, conservative by default
+- Immutable operational events for failed and replay-safe expired-lease recovery
 - Latency, token, cost, input, output, and error recording per step
 - Prometheus HTTP, workflow execution, step attempt, and worker lifecycle metrics
 - Database-backed queue depth and oldest-pending-age metrics
@@ -209,6 +210,10 @@ declared replay-safe only when repeating its external call is acceptable. For si
 `${runtime.operation_key}` to a downstream idempotency header, unique constraint, or outbox and
 enforce it there. The declaration is an operator-owned contract; the runtime cannot verify the
 external system. Approval steps cannot use `replay_safe` because they wait without holding a lease.
+Inspect every committed expired-lease decision with
+`GET /v1/runs/<run-id>/recovery-events`. Events are chronological and preserve the recovery outcome,
+expired worker identity, lease deadline, and recovery timestamp even after the run resumes or
+finishes.
 
 References support `${input.<key>}`, `${steps.<step-key>.output}`, and runtime context values:
 `${runtime.run_id}`, `${runtime.step_key}`, and `${runtime.operation_key}`. The operation key has the
@@ -402,6 +407,7 @@ across a worker crash and replay-safe recovery.
 | `GET` | `/v1/workflows/{id}/runs/summary` | Count workflow runs by lifecycle status |
 | `POST` | `/v1/workflows/{id}/runs` | Execute a run, or enqueue it with `Prefer: respond-async` |
 | `GET` | `/v1/runs/{id}` | Inspect a run and all step telemetry |
+| `GET` | `/v1/runs/{id}/recovery-events` | Inspect immutable expired-lease recovery decisions |
 | `POST` | `/v1/runs/{id}/approval` | Approve or reject the run's pending human gate |
 
 ## Roadmap

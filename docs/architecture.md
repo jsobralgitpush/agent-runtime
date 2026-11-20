@@ -314,6 +314,7 @@ bypassing the guardrail when a custom, fallback, or unpriced provider is selecte
 erDiagram
     WORKFLOW ||--o{ WORKFLOW_RUN : has
     WORKFLOW_RUN ||--o{ STEP_RUN : records
+    WORKFLOW_RUN ||--o{ WORKFLOW_RUN_RECOVERY_EVENT : recovers
     WORKFLOW {
         uuid id PK
         json definition
@@ -334,6 +335,13 @@ erDiagram
         int prompt_tokens
         float estimated_cost_usd
     }
+    WORKFLOW_RUN_RECOVERY_EVENT {
+        uuid id PK
+        string outcome
+        string expired_lease_owner
+        datetime lease_expired_at
+        datetime created_at
+    }
 ```
 
 ## Execution modes
@@ -351,6 +359,11 @@ declares `replay_safe`, the worker instead returns the run and incomplete step r
 The next worker preserves completed checkpoints, reuses those step records, and increments their
 attempt counts before calling the targets again. An expired lease with no started step is also safe
 to requeue because no external call crossed the execution boundary.
+
+Every recovery decision appends an immutable event in the same transaction that requeues or fails
+the run. The event records the outcome, previous lease owner, expired deadline, and recovery time.
+Chronological lookup by run uses `(run_id, created_at, id)`, so the current run state can change
+without erasing earlier worker-failure evidence.
 
 Clearing ownership fences out the previous worker. Before persisting a step result, every leased
 worker locks the run row and verifies that its ownership and deadline are still valid, preventing a
