@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models import RunStatus, WorkflowLifecycleAction
+from app.models import RunRecoveryOutcome, RunStatus, WorkflowLifecycleAction
 
 STEP_KEY_PATTERN = r"^[a-z][a-z0-9_-]{0,79}$"
 ProviderTimeoutSeconds = Annotated[
@@ -287,6 +287,17 @@ class RunRead(BaseModel):
 class WorkflowRunPage(BaseModel):
     items: list[RunRead]
     next_cursor: str | None = None
+
+
+class WorkflowRunRecoveryEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    run_id: str
+    outcome: RunRecoveryOutcome
+    expired_lease_owner: str | None
+    lease_expired_at: datetime
+    created_at: datetime
 
 
 class RunStatusCounts(BaseModel):

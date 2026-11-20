@@ -17,7 +17,13 @@ from app.metrics import (
     worker_claims_total,
     worker_recoveries_total,
 )
-from app.models import RunStatus, StepRun, WorkflowRun
+from app.models import (
+    RunRecoveryOutcome,
+    RunStatus,
+    StepRun,
+    WorkflowRun,
+    WorkflowRunRecoveryEvent,
+)
 from app.schemas import WorkflowDefinition
 from app.tracing import configure_tracing, use_trace_context
 
@@ -60,6 +66,17 @@ async def recover_expired_runs(
         can_replay = all(
             step.step_key in step_by_key and step_by_key[step.step_key].replay_safe
             for step in incomplete_steps
+        )
+        lease_expired_at = run.lease_expires_at
+        assert lease_expired_at is not None
+        session.add(
+            WorkflowRunRecoveryEvent(
+                run_id=run.id,
+                outcome=(RunRecoveryOutcome.requeued if can_replay else RunRecoveryOutcome.failed),
+                expired_lease_owner=run.lease_owner,
+                lease_expired_at=lease_expired_at,
+                created_at=recovered_at,
+            )
         )
         run.lease_owner = None
         run.lease_expires_at = None

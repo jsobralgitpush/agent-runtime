@@ -40,6 +40,9 @@ can opt into at-least-once recovery with `replay_safe`; the worker requeues an e
 every interrupted step carries that declaration. Completed checkpoints are preserved and attempts
 remain cumulative. This policy can repeat a call that completed remotely but was not persisted, so
 production workflows must document and test the corresponding idempotency strategy.
+Each committed decision appends an immutable recovery event with the outcome, expired worker,
+deadline, and recovery time. These events improve incident diagnosis but are operational history,
+not trusted actor attribution or proof that an external side effect did or did not complete.
 
 ### DAG concurrency
 
@@ -57,8 +60,9 @@ Run creation idempotency does not make arbitrary tools idempotent. Workflow inpu
 idempotency header or unique constraint, or implement an outbox. The runtime cannot verify that a
 custom tool actually enforces the key, so interrupted side effects remain non-replayable by default.
 Setting `replay_safe` is an explicit assertion by the workflow author, not automatic proof. A false
-assertion can duplicate an external effect. Recovery does not yet persist a separate immutable event
-for every lease expiration; operators must retain worker logs and the last heartbeat for diagnosis.
+assertion can duplicate an external effect. Recovery events preserve the runtime decision and lease
+context, but operators must still retain downstream idempotency evidence and provider logs to
+diagnose whether an interrupted external call completed.
 
 ### Human approvals
 
