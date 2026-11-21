@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import (
     archive_workflow,
+    list_run_recovery_events,
     list_workflow_lifecycle_events,
     list_workflows,
     restore_workflow,
@@ -19,12 +20,14 @@ from app.config import Settings
 from app.engine import WorkerLeaseLostError, assert_active_lease
 from app.metrics import METRICS_CONTENT_TYPE
 from app.models import (
+    RunRecoveryOutcome,
     RunStatus,
     StepRun,
     Workflow,
     WorkflowLifecycleAction,
     WorkflowLifecycleEvent,
     WorkflowRun,
+    WorkflowRunRecoveryEvent,
 )
 from app.worker import (
     LEASE_EXPIRED_ERROR,
@@ -2519,6 +2522,122 @@ async def test_worker_requeues_expired_claim_before_any_step_started(
         "2026-10-10T00:00:00",
         "2026-10-10T00:02:00",
     ]
+
+
+async def test_run_recovery_events_support_opt_in_cursor_pagination(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    first_run = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {}},
+        headers={"Prefer": "respond-async"},
+    )
+    foreign_run = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {}},
+        headers={"Prefer": "respond-async"},
+    )
+    assert first_run.status_code == 202
+    assert foreign_run.status_code == 202
+
+    base_time = datetime(2026, 11, 21, tzinfo=UTC)
+    events = [
+        WorkflowRunRecoveryEvent(
+            run_id=first_run.json()["id"],
+            outcome=RunRecoveryOutcome.requeued,
+            expired_lease_owner="worker-a",
+            lease_expired_at=base_time - timedelta(minutes=1),
+            created_at=base_time,
+        ),
+        WorkflowRunRecoveryEvent(
+            run_id=first_run.json()["id"],
+            outcome=RunRecoveryOutcome.failed,
+            expired_lease_owner="worker-b",
+            lease_expired_at=base_time + timedelta(minutes=1),
+            created_at=base_time + timedelta(minutes=2),
+        ),
+        WorkflowRunRecoveryEvent(
+            run_id=foreign_run.json()["id"],
+            outcome=RunRecoveryOutcome.failed,
+            expired_lease_owner="foreign-worker",
+            lease_expired_at=base_time,
+            created_at=base_time + timedelta(minutes=1),
+        ),
+    ]
+    async with TestSession() as session:
+        session.add_all(events)
+        await session.commit()
+
+    url = f"/v1/runs/{first_run.json()['id']}/recovery-events"
+    unbounded = await client.get(url)
+    first = await client.get(url, params={"limit": 1})
+    cursor = first.headers.get("X-Next-Cursor")
+    second = await client.get(url, params={"limit": 1, "cursor": cursor})
+    missing_limit = await client.get(url, params={"cursor": cursor})
+    invalid = await client.get(url, params={"limit": 1, "cursor": "missing"})
+    foreign = await client.get(url, params={"limit": 1, "cursor": events[2].id})
+
+    assert [event["outcome"] for event in unbounded.json()] == ["requeued", "failed"]
+    assert "X-Next-Cursor" not in unbounded.headers
+    assert [event["outcome"] for event in first.json()] == ["requeued"]
+    assert cursor == first.json()[0]["id"]
+    assert [event["outcome"] for event in second.json()] == ["failed"]
+    assert "X-Next-Cursor" not in second.headers
+    assert missing_limit.status_code == 422
+    assert missing_limit.json() == {
+        "detail": {"code": "run_recovery_event_pagination_limit_required"}
+    }
+    assert invalid.status_code == 422
+    assert invalid.json() == {"detail": {"code": "invalid_run_recovery_event_cursor"}}
+    assert foreign.status_code == 422
+    assert foreign.json() == {"detail": {"code": "invalid_run_recovery_event_cursor"}}
+    assert (await client.get(url, params={"limit": 0})).status_code == 422
+    assert (await client.get(url, params={"limit": 101})).status_code == 422
+
+
+async def test_run_recovery_events_build_native_cursor_predicates(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow = await create_workflow(client)
+    run = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {}},
+        headers={"Prefer": "respond-async"},
+    )
+    assert run.status_code == 202
+
+    base_time = datetime(2026, 11, 21, tzinfo=UTC)
+    events = [
+        WorkflowRunRecoveryEvent(
+            run_id=run.json()["id"],
+            outcome=RunRecoveryOutcome.requeued,
+            expired_lease_owner="worker-a",
+            lease_expired_at=base_time - timedelta(minutes=1),
+            created_at=base_time,
+        ),
+        WorkflowRunRecoveryEvent(
+            run_id=run.json()["id"],
+            outcome=RunRecoveryOutcome.failed,
+            expired_lease_owner="worker-b",
+            lease_expired_at=base_time,
+            created_at=base_time + timedelta(minutes=1),
+        ),
+    ]
+    async with TestSession() as session:
+        session.add_all(events)
+        await session.commit()
+        monkeypatch.setattr(session.get_bind().dialect, "name", "postgresql")
+        result = await list_run_recovery_events(
+            run.json()["id"],
+            session,
+            Response(),
+            limit=1,
+            cursor=events[0].id,
+        )
+
+    assert [event.outcome for event in result] == [RunRecoveryOutcome.failed]
 
 
 async def test_worker_reports_when_queue_is_empty() -> None:

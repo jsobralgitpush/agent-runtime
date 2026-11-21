@@ -42,7 +42,10 @@ remain cumulative. This policy can repeat a call that completed remotely but was
 production workflows must document and test the corresponding idempotency strategy.
 Each committed decision appends an immutable recovery event with the outcome, expired worker,
 deadline, and recovery time. These events improve incident diagnosis but are operational history,
-not trusted actor attribution or proof that an external side effect did or did not complete.
+not trusted actor attribution or proof that an external side effect did or did not complete. Event
+cursors are navigation tokens rather than authorization capabilities; tenant ownership must scope
+both the run and cursor event before multi-tenant use. Browser deployments must expose
+`X-Next-Cursor` through CORS when frontend code follows bounded recovery history.
 
 ### DAG concurrency
 

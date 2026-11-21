@@ -213,7 +213,9 @@ external system. Approval steps cannot use `replay_safe` because they wait witho
 Inspect every committed expired-lease decision with
 `GET /v1/runs/<run-id>/recovery-events`. Events are chronological and preserve the recovery outcome,
 expired worker identity, lease deadline, and recovery timestamp even after the run resumes or
-finishes.
+finishes. Long histories can opt into keyset pagination with `limit=1..100`; follow the
+`X-Next-Cursor` header by passing its opaque event ID as `cursor` together with the same limit.
+Omitting `limit` preserves the complete list response.
 
 References support `${input.<key>}`, `${steps.<step-key>.output}`, and runtime context values:
 `${runtime.run_id}`, `${runtime.step_key}`, and `${runtime.operation_key}`. The operation key has the

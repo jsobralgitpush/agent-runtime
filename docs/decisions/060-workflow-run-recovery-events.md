@@ -31,6 +31,5 @@ run recovered more than once retains every decision. Deleting a run cascades to 
 - Worker logs and metrics remain useful for fleet-level alerting, while events support run-level
   diagnosis.
 - Events record runtime decisions, not proof that an interrupted external side effect completed.
-- The endpoint is currently unpaginated; repeated worker failures can grow a run's history, so
-  bounded traversal should be added before very long-lived runs are supported.
+- Bounded traversal is added separately by ADR 061.
 - Future tenant authorization must scope the run before returning its recovery history.

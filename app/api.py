@@ -823,15 +823,68 @@ async def get_run(run_id: str, session: Session) -> WorkflowRun:
 async def list_run_recovery_events(
     run_id: str,
     session: Session,
+    response: Response,
+    limit: Annotated[int | None, Query(ge=1, le=100)] = None,
+    cursor: Annotated[str | None, Query(max_length=36)] = None,
 ) -> list[WorkflowRunRecoveryEvent]:
+    if cursor is not None and limit is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "run_recovery_event_pagination_limit_required"},
+        )
     if await session.get(WorkflowRun, run_id) is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    query = (
-        select(WorkflowRunRecoveryEvent)
-        .where(WorkflowRunRecoveryEvent.run_id == run_id)
-        .order_by(WorkflowRunRecoveryEvent.created_at, WorkflowRunRecoveryEvent.id)
-    )
-    return list(await session.scalars(query))
+
+    query = select(WorkflowRunRecoveryEvent).where(WorkflowRunRecoveryEvent.run_id == run_id)
+    is_sqlite = session.get_bind().dialect.name == "sqlite"
+    if cursor is not None:
+        cursor_event = await session.get(WorkflowRunRecoveryEvent, cursor)
+        if cursor_event is None or cursor_event.run_id != run_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={"code": "invalid_run_recovery_event_cursor"},
+            )
+        if is_sqlite:
+            created_key = func.julianday(WorkflowRunRecoveryEvent.created_at)
+            cursor_key = func.julianday(cursor_event.created_at)
+            query = query.where(
+                or_(
+                    created_key > cursor_key,
+                    and_(
+                        created_key == cursor_key,
+                        WorkflowRunRecoveryEvent.id > cursor_event.id,
+                    ),
+                )
+            )
+        else:
+            query = query.where(
+                or_(
+                    WorkflowRunRecoveryEvent.created_at > cursor_event.created_at,
+                    and_(
+                        WorkflowRunRecoveryEvent.created_at == cursor_event.created_at,
+                        WorkflowRunRecoveryEvent.id > cursor_event.id,
+                    ),
+                )
+            )
+
+    if is_sqlite:
+        query = query.order_by(
+            func.julianday(WorkflowRunRecoveryEvent.created_at),
+            WorkflowRunRecoveryEvent.id,
+        )
+    else:
+        query = query.order_by(
+            WorkflowRunRecoveryEvent.created_at,
+            WorkflowRunRecoveryEvent.id,
+        )
+    if limit is None:
+        return list(await session.scalars(query))
+
+    events = list(await session.scalars(query.limit(limit + 1)))
+    items = events[:limit]
+    if len(events) > limit:
+        response.headers["X-Next-Cursor"] = items[-1].id
+    return items
 
 
 @router.post("/runs/{run_id}/approval", response_model=RunRead)
