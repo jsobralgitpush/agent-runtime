@@ -45,7 +45,8 @@ deadline, and recovery time. These events improve incident diagnosis but are ope
 not trusted actor attribution or proof that an external side effect did or did not complete. Event
 cursors are navigation tokens rather than authorization capabilities; tenant ownership must scope
 both the run and cursor event before multi-tenant use. Browser deployments must expose
-`X-Next-Cursor` through CORS when frontend code follows bounded recovery history.
+`X-Next-Cursor` through CORS when frontend code follows bounded recovery history. Outcome filters
+select operational decisions; they are not an authorization or retention boundary.
 
 ### DAG concurrency
 

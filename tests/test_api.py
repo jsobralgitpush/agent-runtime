@@ -2596,6 +2596,54 @@ async def test_run_recovery_events_support_opt_in_cursor_pagination(
     assert (await client.get(url, params={"limit": 101})).status_code == 422
 
 
+async def test_run_recovery_events_filter_by_outcome(client: AsyncClient) -> None:
+    workflow = await create_workflow(client)
+    run = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {}},
+        headers={"Prefer": "respond-async"},
+    )
+    assert run.status_code == 202
+
+    base_time = datetime(2026, 11, 22, tzinfo=UTC)
+    events = [
+        WorkflowRunRecoveryEvent(
+            run_id=run.json()["id"],
+            outcome=outcome,
+            expired_lease_owner=worker,
+            lease_expired_at=base_time + timedelta(minutes=index),
+            created_at=base_time + timedelta(minutes=index),
+        )
+        for index, (outcome, worker) in enumerate(
+            (
+                (RunRecoveryOutcome.requeued, "safe-worker"),
+                (RunRecoveryOutcome.failed, "failed-worker-a"),
+                (RunRecoveryOutcome.failed, "failed-worker-b"),
+            )
+        )
+    ]
+    async with TestSession() as session:
+        session.add_all(events)
+        await session.commit()
+
+    url = f"/v1/runs/{run.json()['id']}/recovery-events"
+    requeued = await client.get(url, params={"outcome": "requeued"})
+    first_failed = await client.get(url, params={"outcome": "failed", "limit": 1})
+    cursor = first_failed.headers.get("X-Next-Cursor")
+    second_failed = await client.get(
+        url,
+        params={"outcome": "failed", "limit": 1, "cursor": cursor},
+    )
+    invalid = await client.get(url, params={"outcome": "unknown"})
+
+    assert [event["expired_lease_owner"] for event in requeued.json()] == ["safe-worker"]
+    assert [event["expired_lease_owner"] for event in first_failed.json()] == ["failed-worker-a"]
+    assert cursor == first_failed.json()[0]["id"]
+    assert [event["expired_lease_owner"] for event in second_failed.json()] == ["failed-worker-b"]
+    assert "X-Next-Cursor" not in second_failed.headers
+    assert invalid.status_code == 422
+
+
 async def test_run_recovery_events_build_native_cursor_predicates(
     client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

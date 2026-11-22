@@ -12,6 +12,7 @@ from app.database import get_session
 from app.engine import ApprovalStateError, WorkflowEngine
 from app.metrics import METRICS_CONTENT_TYPE, refresh_queue_metrics, render_metrics
 from app.models import (
+    RunRecoveryOutcome,
     RunStatus,
     Workflow,
     WorkflowLifecycleAction,
@@ -824,6 +825,7 @@ async def list_run_recovery_events(
     run_id: str,
     session: Session,
     response: Response,
+    outcome: RunRecoveryOutcome | None = None,
     limit: Annotated[int | None, Query(ge=1, le=100)] = None,
     cursor: Annotated[str | None, Query(max_length=36)] = None,
 ) -> list[WorkflowRunRecoveryEvent]:
@@ -836,6 +838,8 @@ async def list_run_recovery_events(
         raise HTTPException(status_code=404, detail="Run not found")
 
     query = select(WorkflowRunRecoveryEvent).where(WorkflowRunRecoveryEvent.run_id == run_id)
+    if outcome is not None:
+        query = query.where(WorkflowRunRecoveryEvent.outcome == outcome)
     is_sqlite = session.get_bind().dialect.name == "sqlite"
     if cursor is not None:
         cursor_event = await session.get(WorkflowRunRecoveryEvent, cursor)
