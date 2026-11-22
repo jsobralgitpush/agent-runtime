@@ -365,7 +365,8 @@ the run. The event records the outcome, previous lease owner, expired deadline, 
 Chronological lookup by run uses `(run_id, created_at, id)`, so the current run state can change
 without erasing earlier worker-failure evidence. Optional keyset pagination fetches one extra row
 and returns the last emitted event ID in `X-Next-Cursor`; omitting a limit preserves the original
-complete list response.
+complete list response. An optional outcome predicate uses
+`(run_id, outcome, created_at, id)` while preserving the unfiltered chronological access path.
 
 Clearing ownership fences out the previous worker. Before persisting a step result, every leased
 worker locks the run row and verifies that its ownership and deadline are still valid, preventing a

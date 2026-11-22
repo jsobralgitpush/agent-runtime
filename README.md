@@ -215,7 +215,8 @@ Inspect every committed expired-lease decision with
 expired worker identity, lease deadline, and recovery timestamp even after the run resumes or
 finishes. Long histories can opt into keyset pagination with `limit=1..100`; follow the
 `X-Next-Cursor` header by passing its opaque event ID as `cursor` together with the same limit.
-Omitting `limit` preserves the complete list response.
+Omitting `limit` preserves the complete list response. Use `outcome=requeued` or `outcome=failed`
+to inspect only one recovery decision type; the filter composes with cursor pagination.
 
 References support `${input.<key>}`, `${steps.<step-key>.output}`, and runtime context values:
 `${runtime.run_id}`, `${runtime.step_key}`, and `${runtime.operation_key}`. The operation key has the
