@@ -46,7 +46,8 @@ not trusted actor attribution or proof that an external side effect did or did n
 cursors are navigation tokens rather than authorization capabilities; tenant ownership must scope
 both the run and cursor event before multi-tenant use. Browser deployments must expose
 `X-Next-Cursor` through CORS when frontend code follows bounded recovery history. Outcome filters
-select operational decisions; they are not an authorization or retention boundary.
+and creation-time bounds select operational decisions; they are not an authorization, immutable
+reporting snapshot, or retention boundary.
 
 ### DAG concurrency
 
