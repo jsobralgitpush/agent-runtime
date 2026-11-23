@@ -367,6 +367,7 @@ without erasing earlier worker-failure evidence. Optional keyset pagination fetc
 and returns the last emitted event ID in `X-Next-Cursor`; omitting a limit preserves the original
 complete list response. An optional outcome predicate uses
 `(run_id, outcome, created_at, id)` while preserving the unfiltered chronological access path.
+Timezone-aware creation bounds form a half-open interval and are applied before cursor traversal.
 
 Clearing ownership fences out the previous worker. Before persisting a step result, every leased
 worker locks the run row and verifies that its ownership and deadline are still valid, preventing a

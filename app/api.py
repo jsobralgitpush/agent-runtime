@@ -826,9 +826,21 @@ async def list_run_recovery_events(
     session: Session,
     response: Response,
     outcome: RunRecoveryOutcome | None = None,
+    created_from: datetime | None = None,
+    created_before: datetime | None = None,
     limit: Annotated[int | None, Query(ge=1, le=100)] = None,
     cursor: Annotated[str | None, Query(max_length=36)] = None,
 ) -> list[WorkflowRunRecoveryEvent]:
+    time_range_error = "invalid_run_recovery_event_time_range"
+    created_from = _normalize_history_bound(created_from, "created_from", time_range_error)
+    created_before = _normalize_history_bound(created_before, "created_before", time_range_error)
+    _validate_history_range(
+        created_from,
+        created_before,
+        "created_from",
+        "created_before",
+        time_range_error,
+    )
     if cursor is not None and limit is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -841,6 +853,17 @@ async def list_run_recovery_events(
     if outcome is not None:
         query = query.where(WorkflowRunRecoveryEvent.outcome == outcome)
     is_sqlite = session.get_bind().dialect.name == "sqlite"
+    if is_sqlite:
+        created_key = func.julianday(WorkflowRunRecoveryEvent.created_at)
+        if created_from is not None:
+            query = query.where(created_key >= func.julianday(created_from))
+        if created_before is not None:
+            query = query.where(created_key < func.julianday(created_before))
+    else:
+        if created_from is not None:
+            query = query.where(WorkflowRunRecoveryEvent.created_at >= created_from)
+        if created_before is not None:
+            query = query.where(WorkflowRunRecoveryEvent.created_at < created_before)
     if cursor is not None:
         cursor_event = await session.get(WorkflowRunRecoveryEvent, cursor)
         if cursor_event is None or cursor_event.run_id != run_id:
@@ -849,7 +872,6 @@ async def list_run_recovery_events(
                 detail={"code": "invalid_run_recovery_event_cursor"},
             )
         if is_sqlite:
-            created_key = func.julianday(WorkflowRunRecoveryEvent.created_at)
             cursor_key = func.julianday(cursor_event.created_at)
             query = query.where(
                 or_(

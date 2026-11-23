@@ -2644,6 +2644,105 @@ async def test_run_recovery_events_filter_by_outcome(client: AsyncClient) -> Non
     assert invalid.status_code == 422
 
 
+async def test_run_recovery_events_filter_by_creation_time_and_paginate(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    run = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {}},
+        headers={"Prefer": "respond-async"},
+    )
+    assert run.status_code == 202
+
+    base_time = datetime(2026, 11, 23, tzinfo=UTC)
+    events = [
+        WorkflowRunRecoveryEvent(
+            run_id=run.json()["id"],
+            outcome=(RunRecoveryOutcome.requeued if index % 2 == 0 else RunRecoveryOutcome.failed),
+            expired_lease_owner=f"worker-{index}",
+            lease_expired_at=base_time + timedelta(minutes=index),
+            created_at=base_time + timedelta(minutes=index),
+        )
+        for index in range(5)
+    ]
+    async with TestSession() as session:
+        session.add_all(events)
+        await session.commit()
+
+    url = f"/v1/runs/{run.json()['id']}/recovery-events"
+    bounds = {
+        "created_from": "2026-11-23T01:01:00+01:00",
+        "created_before": "2026-11-23T00:05:00Z",
+    }
+    bounded = await client.get(url, params=bounds)
+    first = await client.get(
+        url,
+        params={**bounds, "outcome": "failed", "limit": 1},
+    )
+    second = await client.get(
+        url,
+        params={
+            **bounds,
+            "outcome": "failed",
+            "limit": 1,
+            "cursor": first.headers["X-Next-Cursor"],
+        },
+    )
+
+    assert [event["expired_lease_owner"] for event in bounded.json()] == [
+        "worker-1",
+        "worker-2",
+        "worker-3",
+        "worker-4",
+    ]
+    assert first.json() + second.json() == [
+        event for event in bounded.json() if event["outcome"] == "failed"
+    ]
+    assert "X-Next-Cursor" not in second.headers
+
+
+async def test_run_recovery_event_time_filter_rejects_invalid_ranges(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    run = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {}},
+        headers={"Prefer": "respond-async"},
+    )
+    assert run.status_code == 202
+
+    url = f"/v1/runs/{run.json()['id']}/recovery-events"
+    reversed_range = await client.get(
+        url,
+        params={
+            "created_from": "2026-11-23T00:05:00Z",
+            "created_before": "2026-11-23T00:01:00Z",
+        },
+    )
+    naive_bound = await client.get(
+        url,
+        params={"created_from": "2026-11-23T00:01:00"},
+    )
+
+    assert reversed_range.status_code == 422
+    assert reversed_range.json() == {
+        "detail": {
+            "code": "invalid_run_recovery_event_time_range",
+            "reason": "created_from_must_precede_created_before",
+        }
+    }
+    assert naive_bound.status_code == 422
+    assert naive_bound.json() == {
+        "detail": {
+            "code": "invalid_run_recovery_event_time_range",
+            "reason": "timezone_required",
+            "field": "created_from",
+        }
+    }
+
+
 async def test_run_recovery_events_build_native_cursor_predicates(
     client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -2681,6 +2780,8 @@ async def test_run_recovery_events_build_native_cursor_predicates(
             run.json()["id"],
             session,
             Response(),
+            created_from=base_time + timedelta(minutes=1),
+            created_before=base_time + timedelta(minutes=2),
             limit=1,
             cursor=events[0].id,
         )
