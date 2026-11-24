@@ -300,6 +300,17 @@ class WorkflowRunRecoveryEventRead(BaseModel):
     created_at: datetime
 
 
+class RunRecoveryOutcomeCounts(BaseModel):
+    requeued: int = 0
+    failed: int = 0
+
+
+class WorkflowRunRecoveryEventSummary(BaseModel):
+    run_id: str
+    total: int
+    counts: RunRecoveryOutcomeCounts
+
+
 class RunStatusCounts(BaseModel):
     pending: int = 0
     running: int = 0

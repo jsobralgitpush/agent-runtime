@@ -218,6 +218,8 @@ finishes. Long histories can opt into keyset pagination with `limit=1..100`; fol
 Omitting `limit` preserves the complete list response. Use `outcome=requeued` or `outcome=failed`
 to inspect only one recovery decision type. Timezone-aware `created_from` and `created_before`
 select a half-open recovery window. Repeat filters and bounds while following cursor pagination.
+Retrieve lightweight totals with `GET /v1/runs/<run-id>/recovery-events/summary`; the response
+always includes `total` plus explicit `requeued` and `failed` counts and accepts the same time bounds.
 
 References support `${input.<key>}`, `${steps.<step-key>.output}`, and runtime context values:
 `${runtime.run_id}`, `${runtime.step_key}`, and `${runtime.operation_key}`. The operation key has the
@@ -412,6 +414,7 @@ across a worker crash and replay-safe recovery.
 | `POST` | `/v1/workflows/{id}/runs` | Execute a run, or enqueue it with `Prefer: respond-async` |
 | `GET` | `/v1/runs/{id}` | Inspect a run and all step telemetry |
 | `GET` | `/v1/runs/{id}/recovery-events` | Inspect immutable expired-lease recovery decisions |
+| `GET` | `/v1/runs/{id}/recovery-events/summary` | Count recovery decisions by outcome |
 | `POST` | `/v1/runs/{id}/approval` | Approve or reject the run's pending human gate |
 
 ## Roadmap
