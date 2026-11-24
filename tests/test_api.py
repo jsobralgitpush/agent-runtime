@@ -13,6 +13,7 @@ from app.api import (
     list_workflow_lifecycle_events,
     list_workflows,
     restore_workflow,
+    summarize_run_recovery_events,
     summarize_workflow_lifecycle_events,
     summarize_workflows,
 )
@@ -2743,6 +2744,75 @@ async def test_run_recovery_event_time_filter_rejects_invalid_ranges(
     }
 
 
+async def test_run_recovery_event_summary_counts_time_bounded_outcomes(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    run = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {}},
+        headers={"Prefer": "respond-async"},
+    )
+    assert run.status_code == 202
+
+    base_time = datetime(2026, 11, 24, tzinfo=UTC)
+    events = [
+        WorkflowRunRecoveryEvent(
+            run_id=run.json()["id"],
+            outcome=(RunRecoveryOutcome.requeued if index % 2 == 0 else RunRecoveryOutcome.failed),
+            expired_lease_owner=f"worker-{index}",
+            lease_expired_at=base_time + timedelta(minutes=index),
+            created_at=base_time + timedelta(minutes=index),
+        )
+        for index in range(5)
+    ]
+    async with TestSession() as session:
+        session.add_all(events)
+        await session.commit()
+
+    summary_url = f"/v1/runs/{run.json()['id']}/recovery-events/summary"
+    unbounded = await client.get(summary_url)
+    bounded = await client.get(
+        summary_url,
+        params={
+            "created_from": "2026-11-24T01:01:00+01:00",
+            "created_before": "2026-11-24T00:04:00Z",
+        },
+    )
+    empty = await client.get(
+        summary_url,
+        params={"created_from": "2026-11-24T00:10:00Z"},
+    )
+    missing = await client.get("/v1/runs/not-found/recovery-events/summary")
+    invalid = await client.get(
+        summary_url,
+        params={
+            "created_from": "2026-11-24T00:05:00Z",
+            "created_before": "2026-11-24T00:01:00Z",
+        },
+    )
+
+    assert unbounded.json() == {
+        "run_id": run.json()["id"],
+        "total": 5,
+        "counts": {"requeued": 3, "failed": 2},
+    }
+    assert bounded.json() == {
+        "run_id": run.json()["id"],
+        "total": 3,
+        "counts": {"requeued": 1, "failed": 2},
+    }
+    assert empty.json() == {
+        "run_id": run.json()["id"],
+        "total": 0,
+        "counts": {"requeued": 0, "failed": 0},
+    }
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": "Run not found"}
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"]["code"] == "invalid_run_recovery_event_time_range"
+
+
 async def test_run_recovery_events_build_native_cursor_predicates(
     client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -2785,8 +2855,19 @@ async def test_run_recovery_events_build_native_cursor_predicates(
             limit=1,
             cursor=events[0].id,
         )
+        summary = await summarize_run_recovery_events(
+            run.json()["id"],
+            session,
+            created_from=base_time + timedelta(minutes=1),
+            created_before=base_time + timedelta(minutes=2),
+        )
 
     assert [event.outcome for event in result] == [RunRecoveryOutcome.failed]
+    assert summary.model_dump(mode="json") == {
+        "run_id": run.json()["id"],
+        "total": 1,
+        "counts": {"requeued": 0, "failed": 1},
+    }
 
 
 async def test_worker_reports_when_queue_is_empty() -> None:

@@ -47,7 +47,8 @@ cursors are navigation tokens rather than authorization capabilities; tenant own
 both the run and cursor event before multi-tenant use. Browser deployments must expose
 `X-Next-Cursor` through CORS when frontend code follows bounded recovery history. Outcome filters
 and creation-time bounds select operational decisions; they are not an authorization, immutable
-reporting snapshot, or retention boundary.
+reporting snapshot, or retention boundary. Recovery summaries reflect committed rows at query time
+and are not a transactional snapshot shared with a later event-list request.
 
 ### DAG concurrency
 

@@ -28,6 +28,7 @@ from app.schemas import (
     ReadinessRead,
     RunCreate,
     RunRead,
+    RunRecoveryOutcomeCounts,
     RunStatusCounts,
     ToolRead,
     WorkflowArchiveStateCounts,
@@ -40,6 +41,7 @@ from app.schemas import (
     WorkflowRead,
     WorkflowRunPage,
     WorkflowRunRecoveryEventRead,
+    WorkflowRunRecoveryEventSummary,
     WorkflowRunSummary,
     WorkflowValidationRead,
 )
@@ -911,6 +913,59 @@ async def list_run_recovery_events(
     if len(events) > limit:
         response.headers["X-Next-Cursor"] = items[-1].id
     return items
+
+
+@router.get(
+    "/runs/{run_id}/recovery-events/summary",
+    response_model=WorkflowRunRecoveryEventSummary,
+)
+async def summarize_run_recovery_events(
+    run_id: str,
+    session: Session,
+    created_from: datetime | None = None,
+    created_before: datetime | None = None,
+) -> WorkflowRunRecoveryEventSummary:
+    time_range_error = "invalid_run_recovery_event_time_range"
+    created_from = _normalize_history_bound(created_from, "created_from", time_range_error)
+    created_before = _normalize_history_bound(created_before, "created_before", time_range_error)
+    _validate_history_range(
+        created_from,
+        created_before,
+        "created_from",
+        "created_before",
+        time_range_error,
+    )
+    if await session.get(WorkflowRun, run_id) is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    conditions = [WorkflowRunRecoveryEvent.run_id == run_id]
+    if session.get_bind().dialect.name == "sqlite":
+        created_key = func.julianday(WorkflowRunRecoveryEvent.created_at)
+        if created_from is not None:
+            conditions.append(created_key >= func.julianday(created_from))
+        if created_before is not None:
+            conditions.append(created_key < func.julianday(created_before))
+    else:
+        if created_from is not None:
+            conditions.append(WorkflowRunRecoveryEvent.created_at >= created_from)
+        if created_before is not None:
+            conditions.append(WorkflowRunRecoveryEvent.created_at < created_before)
+
+    result = await session.execute(
+        select(WorkflowRunRecoveryEvent.outcome, func.count(WorkflowRunRecoveryEvent.id))
+        .where(*conditions)
+        .group_by(WorkflowRunRecoveryEvent.outcome)
+    )
+    counts_by_outcome = {outcome: count for outcome, count in result.all()}
+    counts = RunRecoveryOutcomeCounts(
+        requeued=counts_by_outcome.get(RunRecoveryOutcome.requeued, 0),
+        failed=counts_by_outcome.get(RunRecoveryOutcome.failed, 0),
+    )
+    return WorkflowRunRecoveryEventSummary(
+        run_id=run_id,
+        total=sum(counts_by_outcome.values()),
+        counts=counts,
+    )
 
 
 @router.post("/runs/{run_id}/approval", response_model=RunRead)
