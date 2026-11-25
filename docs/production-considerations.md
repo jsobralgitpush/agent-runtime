@@ -45,10 +45,11 @@ deadline, and recovery time. These events improve incident diagnosis but are ope
 not trusted actor attribution or proof that an external side effect did or did not complete. Event
 cursors are navigation tokens rather than authorization capabilities; tenant ownership must scope
 both the run and cursor event before multi-tenant use. Browser deployments must expose
-`X-Next-Cursor` through CORS when frontend code follows bounded recovery history. Outcome filters
-and creation-time bounds select operational decisions; they are not an authorization, immutable
-reporting snapshot, or retention boundary. Recovery summaries reflect committed rows at query time
-and are not a transactional snapshot shared with a later event-list request.
+`X-Next-Cursor` through CORS when frontend code follows bounded recovery history. Outcome, exact
+expired-owner, and creation-time filters select operational decisions; they are not authorization,
+trusted worker attribution, an immutable reporting snapshot, or a retention boundary. Worker IDs
+are deployment-provided labels and must not contain secrets. Recovery summaries reflect committed
+rows at query time and are not a transactional snapshot shared with a later event-list request.
 
 ### DAG concurrency
 

@@ -828,6 +828,7 @@ async def list_run_recovery_events(
     session: Session,
     response: Response,
     outcome: RunRecoveryOutcome | None = None,
+    expired_lease_owner: Annotated[str | None, Query(min_length=1, max_length=255)] = None,
     created_from: datetime | None = None,
     created_before: datetime | None = None,
     limit: Annotated[int | None, Query(ge=1, le=100)] = None,
@@ -854,6 +855,8 @@ async def list_run_recovery_events(
     query = select(WorkflowRunRecoveryEvent).where(WorkflowRunRecoveryEvent.run_id == run_id)
     if outcome is not None:
         query = query.where(WorkflowRunRecoveryEvent.outcome == outcome)
+    if expired_lease_owner is not None:
+        query = query.where(WorkflowRunRecoveryEvent.expired_lease_owner == expired_lease_owner)
     is_sqlite = session.get_bind().dialect.name == "sqlite"
     if is_sqlite:
         created_key = func.julianday(WorkflowRunRecoveryEvent.created_at)
