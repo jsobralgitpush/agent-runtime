@@ -216,8 +216,9 @@ expired worker identity, lease deadline, and recovery timestamp even after the r
 finishes. Long histories can opt into keyset pagination with `limit=1..100`; follow the
 `X-Next-Cursor` header by passing its opaque event ID as `cursor` together with the same limit.
 Omitting `limit` preserves the complete list response. Use `outcome=requeued` or `outcome=failed`
-to inspect only one recovery decision type. Timezone-aware `created_from` and `created_before`
-select a half-open recovery window. Repeat filters and bounds while following cursor pagination.
+to inspect only one recovery decision type, and `expired_lease_owner=<worker-id>` for an exact,
+case-sensitive worker match. Timezone-aware `created_from` and `created_before` select a half-open
+recovery window. Repeat filters and bounds while following cursor pagination.
 Retrieve lightweight totals with `GET /v1/runs/<run-id>/recovery-events/summary`; the response
 always includes `total` plus explicit `requeued` and `failed` counts and accepts the same time bounds.
 
@@ -413,7 +414,7 @@ across a worker crash and replay-safe recovery.
 | `GET` | `/v1/workflows/{id}/runs/summary` | Count workflow runs by lifecycle status |
 | `POST` | `/v1/workflows/{id}/runs` | Execute a run, or enqueue it with `Prefer: respond-async` |
 | `GET` | `/v1/runs/{id}` | Inspect a run and all step telemetry |
-| `GET` | `/v1/runs/{id}/recovery-events` | Inspect immutable expired-lease recovery decisions |
+| `GET` | `/v1/runs/{id}/recovery-events` | Filter immutable expired-lease recovery decisions |
 | `GET` | `/v1/runs/{id}/recovery-events/summary` | Count recovery decisions by outcome |
 | `POST` | `/v1/runs/{id}/approval` | Approve or reject the run's pending human gate |
 

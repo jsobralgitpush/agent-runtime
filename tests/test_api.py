@@ -2703,6 +2703,65 @@ async def test_run_recovery_events_filter_by_creation_time_and_paginate(
     assert "X-Next-Cursor" not in second.headers
 
 
+async def test_run_recovery_events_filter_by_expired_owner_and_paginate(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    run = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {}},
+        headers={"Prefer": "respond-async"},
+    )
+    assert run.status_code == 202
+
+    base_time = datetime(2026, 11, 25, tzinfo=UTC)
+    owners_and_outcomes = (
+        ("worker-a", RunRecoveryOutcome.requeued),
+        ("worker-b", RunRecoveryOutcome.failed),
+        ("worker-a", RunRecoveryOutcome.failed),
+        ("Worker-A", RunRecoveryOutcome.failed),
+    )
+    events = [
+        WorkflowRunRecoveryEvent(
+            run_id=run.json()["id"],
+            outcome=outcome,
+            expired_lease_owner=owner,
+            lease_expired_at=base_time + timedelta(minutes=index),
+            created_at=base_time + timedelta(minutes=index),
+        )
+        for index, (owner, outcome) in enumerate(owners_and_outcomes)
+    ]
+    async with TestSession() as session:
+        session.add_all(events)
+        await session.commit()
+
+    url = f"/v1/runs/{run.json()['id']}/recovery-events"
+    params = {"expired_lease_owner": "worker-a", "limit": 1}
+    first = await client.get(url, params=params)
+    second = await client.get(
+        url,
+        params={**params, "cursor": first.headers["X-Next-Cursor"]},
+    )
+    failed = await client.get(
+        url,
+        params={"expired_lease_owner": "worker-a", "outcome": "failed"},
+    )
+    wrong_case = await client.get(url, params={"expired_lease_owner": "Worker-A"})
+    missing = await client.get(url, params={"expired_lease_owner": "missing-worker"})
+
+    assert first.json() + second.json() == [
+        event
+        for event in (await client.get(url)).json()
+        if event["expired_lease_owner"] == "worker-a"
+    ]
+    assert "X-Next-Cursor" not in second.headers
+    assert [event["id"] for event in failed.json()] == [events[2].id]
+    assert [event["id"] for event in wrong_case.json()] == [events[3].id]
+    assert missing.json() == []
+    assert (await client.get(url, params={"expired_lease_owner": ""})).status_code == 422
+    assert (await client.get(url, params={"expired_lease_owner": "w" * 256})).status_code == 422
+
+
 async def test_run_recovery_event_time_filter_rejects_invalid_ranges(
     client: AsyncClient,
 ) -> None:

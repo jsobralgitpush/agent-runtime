@@ -149,6 +149,13 @@ class WorkflowRunRecoveryEvent(Base):
             "created_at",
             "id",
         ),
+        Index(
+            "ix_workflow_run_recovery_events_run_owner_created_id",
+            "run_id",
+            "expired_lease_owner",
+            "created_at",
+            "id",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
