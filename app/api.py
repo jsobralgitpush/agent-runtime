@@ -925,6 +925,7 @@ async def list_run_recovery_events(
 async def summarize_run_recovery_events(
     run_id: str,
     session: Session,
+    expired_lease_owner: Annotated[str | None, Query(min_length=1, max_length=255)] = None,
     created_from: datetime | None = None,
     created_before: datetime | None = None,
 ) -> WorkflowRunRecoveryEventSummary:
@@ -942,6 +943,8 @@ async def summarize_run_recovery_events(
         raise HTTPException(status_code=404, detail="Run not found")
 
     conditions = [WorkflowRunRecoveryEvent.run_id == run_id]
+    if expired_lease_owner is not None:
+        conditions.append(WorkflowRunRecoveryEvent.expired_lease_owner == expired_lease_owner)
     if session.get_bind().dialect.name == "sqlite":
         created_key = func.julianday(WorkflowRunRecoveryEvent.created_at)
         if created_from is not None:
