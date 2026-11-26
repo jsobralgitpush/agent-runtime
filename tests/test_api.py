@@ -2872,6 +2872,82 @@ async def test_run_recovery_event_summary_counts_time_bounded_outcomes(
     assert invalid.json()["detail"]["code"] == "invalid_run_recovery_event_time_range"
 
 
+async def test_run_recovery_event_summary_filters_by_expired_owner(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    run = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {}},
+        headers={"Prefer": "respond-async"},
+    )
+    assert run.status_code == 202
+
+    base_time = datetime(2026, 11, 26, tzinfo=UTC)
+    owners_and_outcomes = (
+        ("worker-a", RunRecoveryOutcome.requeued),
+        ("worker-b", RunRecoveryOutcome.failed),
+        ("worker-a", RunRecoveryOutcome.failed),
+        ("Worker-A", RunRecoveryOutcome.failed),
+    )
+    events = [
+        WorkflowRunRecoveryEvent(
+            run_id=run.json()["id"],
+            outcome=outcome,
+            expired_lease_owner=owner,
+            lease_expired_at=base_time + timedelta(minutes=index),
+            created_at=base_time + timedelta(minutes=index),
+        )
+        for index, (owner, outcome) in enumerate(owners_and_outcomes)
+    ]
+    async with TestSession() as session:
+        session.add_all(events)
+        await session.commit()
+
+    summary_url = f"/v1/runs/{run.json()['id']}/recovery-events/summary"
+    owner = await client.get(summary_url, params={"expired_lease_owner": "worker-a"})
+    bounded = await client.get(
+        summary_url,
+        params={
+            "expired_lease_owner": "worker-a",
+            "created_from": "2026-11-26T00:01:00Z",
+        },
+    )
+    wrong_case = await client.get(
+        summary_url,
+        params={"expired_lease_owner": "Worker-A"},
+    )
+    missing = await client.get(
+        summary_url,
+        params={"expired_lease_owner": "missing-worker"},
+    )
+
+    assert owner.json() == {
+        "run_id": run.json()["id"],
+        "total": 2,
+        "counts": {"requeued": 1, "failed": 1},
+    }
+    assert bounded.json() == {
+        "run_id": run.json()["id"],
+        "total": 1,
+        "counts": {"requeued": 0, "failed": 1},
+    }
+    assert wrong_case.json() == {
+        "run_id": run.json()["id"],
+        "total": 1,
+        "counts": {"requeued": 0, "failed": 1},
+    }
+    assert missing.json() == {
+        "run_id": run.json()["id"],
+        "total": 0,
+        "counts": {"requeued": 0, "failed": 0},
+    }
+    assert (await client.get(summary_url, params={"expired_lease_owner": ""})).status_code == 422
+    assert (
+        await client.get(summary_url, params={"expired_lease_owner": "w" * 256})
+    ).status_code == 422
+
+
 async def test_run_recovery_events_build_native_cursor_predicates(
     client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

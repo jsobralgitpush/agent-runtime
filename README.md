@@ -220,7 +220,8 @@ to inspect only one recovery decision type, and `expired_lease_owner=<worker-id>
 case-sensitive worker match. Timezone-aware `created_from` and `created_before` select a half-open
 recovery window. Repeat filters and bounds while following cursor pagination.
 Retrieve lightweight totals with `GET /v1/runs/<run-id>/recovery-events/summary`; the response
-always includes `total` plus explicit `requeued` and `failed` counts and accepts the same time bounds.
+always includes `total` plus explicit `requeued` and `failed` counts and accepts the same exact
+expired-worker filter and time bounds.
 
 References support `${input.<key>}`, `${steps.<step-key>.output}`, and runtime context values:
 `${runtime.run_id}`, `${runtime.step_key}`, and `${runtime.operation_key}`. The operation key has the

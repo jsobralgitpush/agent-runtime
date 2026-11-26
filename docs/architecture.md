@@ -371,8 +371,9 @@ An exact, case-sensitive expired-owner predicate uses
 `(run_id, expired_lease_owner, created_at, id)` to isolate repeated failures from one worker
 without downloading unrelated decisions. Null owners do not match a named worker.
 Timezone-aware creation bounds form a half-open interval and are applied before cursor traversal.
-Recovery summaries reuse the same optional time predicates and execute one grouped count by outcome
-without loading event rows. Both outcome keys remain present when a window is empty.
+Recovery summaries reuse the exact expired-owner and optional time predicates, then execute one
+grouped count by outcome without loading event rows. Both outcome keys remain present when a
+filtered window is empty.
 
 Clearing ownership fences out the previous worker. Before persisting a step result, every leased
 worker locks the run row and verifies that its ownership and deadline are still valid, preventing a

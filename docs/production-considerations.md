@@ -49,7 +49,8 @@ both the run and cursor event before multi-tenant use. Browser deployments must 
 expired-owner, and creation-time filters select operational decisions; they are not authorization,
 trusted worker attribution, an immutable reporting snapshot, or a retention boundary. Worker IDs
 are deployment-provided labels and must not contain secrets. Recovery summaries reflect committed
-rows at query time and are not a transactional snapshot shared with a later event-list request.
+rows matching the optional exact worker and time bounds at query time; they are not a transactional
+snapshot shared with a later event-list request.
 
 ### DAG concurrency
 
