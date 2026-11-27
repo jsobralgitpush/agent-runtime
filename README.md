@@ -218,7 +218,8 @@ finishes. Long histories can opt into keyset pagination with `limit=1..100`; fol
 Omitting `limit` preserves the complete list response. Use `outcome=requeued` or `outcome=failed`
 to inspect only one recovery decision type, and `expired_lease_owner=<worker-id>` for an exact,
 case-sensitive worker match. Timezone-aware `created_from` and `created_before` select a half-open
-recovery window. Repeat filters and bounds while following cursor pagination.
+recovery-processing window. Use `lease_expired_from` and `lease_expired_before` for a half-open
+window over the actual lease deadline. Repeat filters and bounds while following cursor pagination.
 Retrieve lightweight totals with `GET /v1/runs/<run-id>/recovery-events/summary`; the response
 always includes `total` plus explicit `requeued` and `failed` counts and accepts the same exact
 expired-worker filter and time bounds.

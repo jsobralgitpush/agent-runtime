@@ -2803,6 +2803,106 @@ async def test_run_recovery_event_time_filter_rejects_invalid_ranges(
     }
 
 
+async def test_run_recovery_events_filter_by_lease_expiry_and_paginate(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    run = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {}},
+        headers={"Prefer": "respond-async"},
+    )
+    assert run.status_code == 202
+
+    base_time = datetime(2026, 11, 27, tzinfo=UTC)
+    owners_and_outcomes = (
+        ("worker-a", RunRecoveryOutcome.failed),
+        ("worker-a", RunRecoveryOutcome.failed),
+        ("worker-b", RunRecoveryOutcome.failed),
+        ("worker-a", RunRecoveryOutcome.requeued),
+        ("worker-a", RunRecoveryOutcome.failed),
+    )
+    events = [
+        WorkflowRunRecoveryEvent(
+            run_id=run.json()["id"],
+            outcome=outcome,
+            expired_lease_owner=owner,
+            lease_expired_at=base_time + timedelta(minutes=index),
+            created_at=base_time + timedelta(hours=1, minutes=index),
+        )
+        for index, (owner, outcome) in enumerate(owners_and_outcomes)
+    ]
+    async with TestSession() as session:
+        session.add_all(events)
+        await session.commit()
+
+    url = f"/v1/runs/{run.json()['id']}/recovery-events"
+    bounds = {
+        "lease_expired_from": "2026-11-27T01:01:00+01:00",
+        "lease_expired_before": "2026-11-27T00:05:00Z",
+    }
+    bounded = await client.get(url, params=bounds)
+    filters = {
+        **bounds,
+        "expired_lease_owner": "worker-a",
+        "outcome": "failed",
+        "limit": 1,
+    }
+    first = await client.get(url, params=filters)
+    second = await client.get(
+        url,
+        params={**filters, "cursor": first.headers["X-Next-Cursor"]},
+    )
+
+    assert [event["id"] for event in bounded.json()] == [event.id for event in events[1:]]
+    assert [event["id"] for event in first.json() + second.json()] == [
+        events[1].id,
+        events[4].id,
+    ]
+    assert "X-Next-Cursor" not in second.headers
+
+
+async def test_run_recovery_event_lease_expiry_filter_rejects_invalid_ranges(
+    client: AsyncClient,
+) -> None:
+    workflow = await create_workflow(client)
+    run = await client.post(
+        f"/v1/workflows/{workflow['id']}/runs",
+        json={"inputs": {}},
+        headers={"Prefer": "respond-async"},
+    )
+    assert run.status_code == 202
+
+    url = f"/v1/runs/{run.json()['id']}/recovery-events"
+    reversed_range = await client.get(
+        url,
+        params={
+            "lease_expired_from": "2026-11-27T00:05:00Z",
+            "lease_expired_before": "2026-11-27T00:01:00Z",
+        },
+    )
+    naive_bound = await client.get(
+        url,
+        params={"lease_expired_from": "2026-11-27T00:01:00"},
+    )
+
+    assert reversed_range.status_code == 422
+    assert reversed_range.json() == {
+        "detail": {
+            "code": "invalid_run_recovery_event_lease_expiry_range",
+            "reason": "lease_expired_from_must_precede_lease_expired_before",
+        }
+    }
+    assert naive_bound.status_code == 422
+    assert naive_bound.json() == {
+        "detail": {
+            "code": "invalid_run_recovery_event_lease_expiry_range",
+            "reason": "timezone_required",
+            "field": "lease_expired_from",
+        }
+    }
+
+
 async def test_run_recovery_event_summary_counts_time_bounded_outcomes(
     client: AsyncClient,
 ) -> None:
@@ -2987,6 +3087,8 @@ async def test_run_recovery_events_build_native_cursor_predicates(
             Response(),
             created_from=base_time + timedelta(minutes=1),
             created_before=base_time + timedelta(minutes=2),
+            lease_expired_from=base_time,
+            lease_expired_before=base_time + timedelta(minutes=1),
             limit=1,
             cursor=events[0].id,
         )
