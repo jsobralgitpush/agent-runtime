@@ -48,9 +48,10 @@ both the run and cursor event before multi-tenant use. Browser deployments must 
 `X-Next-Cursor` through CORS when frontend code follows bounded recovery history. Outcome, exact
 expired-owner, and creation-time filters select operational decisions; they are not authorization,
 trusted worker attribution, an immutable reporting snapshot, or a retention boundary. Worker IDs
-are deployment-provided labels and must not contain secrets. Recovery summaries reflect committed
-rows matching the optional exact worker and time bounds at query time; they are not a transactional
-snapshot shared with a later event-list request.
+are deployment-provided labels and must not contain secrets. Lease-expiry bounds use the deadline
+recorded by the failed worker; clock skew can therefore affect incident-window membership. Recovery
+summaries reflect committed rows matching the optional exact worker and time bounds at query time;
+they are not a transactional snapshot shared with a later event-list request.
 
 ### DAG concurrency
 
