@@ -957,6 +957,8 @@ async def summarize_run_recovery_events(
     expired_lease_owner: Annotated[str | None, Query(min_length=1, max_length=255)] = None,
     created_from: datetime | None = None,
     created_before: datetime | None = None,
+    lease_expired_from: datetime | None = None,
+    lease_expired_before: datetime | None = None,
 ) -> WorkflowRunRecoveryEventSummary:
     time_range_error = "invalid_run_recovery_event_time_range"
     created_from = _normalize_history_bound(created_from, "created_from", time_range_error)
@@ -968,6 +970,24 @@ async def summarize_run_recovery_events(
         "created_before",
         time_range_error,
     )
+    lease_range_error = "invalid_run_recovery_event_lease_expiry_range"
+    lease_expired_from = _normalize_history_bound(
+        lease_expired_from,
+        "lease_expired_from",
+        lease_range_error,
+    )
+    lease_expired_before = _normalize_history_bound(
+        lease_expired_before,
+        "lease_expired_before",
+        lease_range_error,
+    )
+    _validate_history_range(
+        lease_expired_from,
+        lease_expired_before,
+        "lease_expired_from",
+        "lease_expired_before",
+        lease_range_error,
+    )
     if await session.get(WorkflowRun, run_id) is None:
         raise HTTPException(status_code=404, detail="Run not found")
 
@@ -976,15 +996,24 @@ async def summarize_run_recovery_events(
         conditions.append(WorkflowRunRecoveryEvent.expired_lease_owner == expired_lease_owner)
     if session.get_bind().dialect.name == "sqlite":
         created_key = func.julianday(WorkflowRunRecoveryEvent.created_at)
+        lease_expired_key = func.julianday(WorkflowRunRecoveryEvent.lease_expired_at)
         if created_from is not None:
             conditions.append(created_key >= func.julianday(created_from))
         if created_before is not None:
             conditions.append(created_key < func.julianday(created_before))
+        if lease_expired_from is not None:
+            conditions.append(lease_expired_key >= func.julianday(lease_expired_from))
+        if lease_expired_before is not None:
+            conditions.append(lease_expired_key < func.julianday(lease_expired_before))
     else:
         if created_from is not None:
             conditions.append(WorkflowRunRecoveryEvent.created_at >= created_from)
         if created_before is not None:
             conditions.append(WorkflowRunRecoveryEvent.created_at < created_before)
+        if lease_expired_from is not None:
+            conditions.append(WorkflowRunRecoveryEvent.lease_expired_at >= lease_expired_from)
+        if lease_expired_before is not None:
+            conditions.append(WorkflowRunRecoveryEvent.lease_expired_at < lease_expired_before)
 
     result = await session.execute(
         select(WorkflowRunRecoveryEvent.outcome, func.count(WorkflowRunRecoveryEvent.id))

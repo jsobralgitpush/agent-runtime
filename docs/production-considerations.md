@@ -51,7 +51,8 @@ trusted worker attribution, an immutable reporting snapshot, or a retention boun
 are deployment-provided labels and must not contain secrets. Lease-expiry bounds use the deadline
 recorded by the failed worker; clock skew can therefore affect incident-window membership. Recovery
 summaries reflect committed rows matching the optional exact worker and time bounds at query time;
-they are not a transactional snapshot shared with a later event-list request.
+both recovery and lease-expiry windows remain operational selectors rather than a transactional
+snapshot shared with a later event-list request.
 
 ### DAG concurrency
 

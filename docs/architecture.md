@@ -374,9 +374,9 @@ Timezone-aware creation bounds form a half-open interval and are applied before 
 Separate timezone-aware lease-expiry bounds select the recorded lease deadline rather than the
 later recovery time. `(run_id, lease_expired_at, created_at, id)` bounds those incident-window
 queries while results and cursors remain ordered by recovery creation time.
-Recovery summaries reuse the exact expired-owner and optional time predicates, then execute one
-grouped count by outcome without loading event rows. Both outcome keys remain present when a
-filtered window is empty.
+Recovery summaries reuse the exact expired-owner, recovery-time, and lease-expiry predicates, then
+execute one grouped count by outcome without loading event rows. Both outcome keys remain present
+when a filtered window is empty.
 
 Clearing ownership fences out the previous worker. Before persisting a step result, every leased
 worker locks the run row and verifies that its ownership and deadline are still valid, preventing a
